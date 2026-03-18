@@ -50,3 +50,4 @@ backend/models/
 
 # Local config
 *.local
+CLAUDE.md

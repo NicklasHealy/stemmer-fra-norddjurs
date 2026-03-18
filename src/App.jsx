@@ -1,191 +1,24 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
 
-// ─── Storage helpers ───
-const DB_KEY = "norddjurs-db";
+// ─── API ───
+const API_BASE = "http://localhost:8321";
 
-const getDB = async () => {
-  try {
-    const result = await window.storage.get(DB_KEY);
-    return result ? JSON.parse(result.value) : null;
-  } catch {
-    return null;
+const apiFetch = (path, options = {}, token = null) => {
+  const headers = { ...(options.headers || {}) };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  if (!(options.body instanceof FormData)) {
+    headers["Content-Type"] = "application/json";
   }
+  return fetch(`${API_BASE}${path}`, { ...options, headers });
 };
-
-const saveDB = async (db) => {
-  try {
-    // Store audio separately to avoid hitting storage size limits
-    const dbCopy = JSON.parse(JSON.stringify(db));
-    dbCopy.responses = dbCopy.responses.map(r => {
-      if (r.media_url && r.media_url.startsWith("data:")) {
-        // Save audio in its own key
-        window.storage.set(`audio-${r.id}`, r.media_url).catch(() => {});
-        return { ...r, media_url: `audio-ref:${r.id}` };
-      }
-      return r;
-    });
-    await window.storage.set(DB_KEY, JSON.stringify(dbCopy));
-  } catch (e) {
-    console.error("Storage save failed:", e);
-  }
-};
-
-const hydrateAudio = async (db) => {
-  // Restore audio base64 data from separate storage keys
-  const hydrated = { ...db, responses: await Promise.all(
-    db.responses.map(async (r) => {
-      if (r.media_url && r.media_url.startsWith("audio-ref:")) {
-        const audioKey = r.media_url.replace("audio-ref:", "audio-");
-        try {
-          const result = await window.storage.get(audioKey);
-          return { ...r, media_url: result?.value || null };
-        } catch {
-          return { ...r, media_url: null };
-        }
-      }
-      return r;
-    })
-  )};
-  return hydrated;
-};
-
-const defaultDB = () => ({
-  themes: [
-    { id: "t1", name: "Økonomi & Planlægning", icon: "💰", sort_order: 1 },
-    { id: "t2", name: "Børn, Unge & Sociale Forhold", icon: "👨‍👩‍👧‍👦", sort_order: 2 },
-    { id: "t3", name: "Beskæftigelse & Uddannelse", icon: "🎓", sort_order: 3 },
-    { id: "t4", name: "Klima, Natur & Miljø", icon: "🌿", sort_order: 4 },
-    { id: "t5", name: "Kultur, Fritid & Idræt", icon: "🎭", sort_order: 5 },
-  ],
-  questions: [
-    { id: "q1", theme_id: "t1", title: "Budget-prioritering", body: "Hvad synes du er vigtigst, når kommunen skal lægge budget for de næste år?", is_active: true, allow_followup: true, followup_prompt: "", sort_order: 1 },
-    { id: "q2", theme_id: "t1", title: "Pengeforbrug", body: "Hvis du selv kunne bestemme, hvad ville du bruge flere penge på i Norddjurs?", is_active: true, allow_followup: true, followup_prompt: "", sort_order: 2 },
-    { id: "q3", theme_id: "t2", title: "Børnefamilier", body: "Hvad fungerer godt for børnefamilier i Norddjurs — og hvad mangler?", is_active: true, allow_followup: true, followup_prompt: "", sort_order: 1 },
-    { id: "q4", theme_id: "t2", title: "Udsatte borgere", body: "Hvad ville gøre den største forskel for udsatte borgere i kommunen?", is_active: true, allow_followup: true, followup_prompt: "", sort_order: 2 },
-    { id: "q5", theme_id: "t3", title: "Bosætning", body: "Hvad skal der til for at flere vælger at arbejde og bo i Norddjurs?", is_active: true, allow_followup: true, followup_prompt: "", sort_order: 1 },
-    { id: "q6", theme_id: "t3", title: "Arbejdsmarked", body: "Hvordan kan kommunen bedst hjælpe dem, der står uden for arbejdsmarkedet?", is_active: true, allow_followup: true, followup_prompt: "", sort_order: 2 },
-    { id: "q7", theme_id: "t4", title: "Fremtidsvision", body: "Hvordan skal Norddjurs se ud om 10 år, når det handler om natur og klima?", is_active: true, allow_followup: true, followup_prompt: "", sort_order: 1 },
-    { id: "q8", theme_id: "t4", title: "Klimahandling", body: "Hvad er det vigtigste, kommunen kan gøre for klimaet lige nu?", is_active: true, allow_followup: true, followup_prompt: "", sort_order: 2 },
-    { id: "q9", theme_id: "t5", title: "Fritidstilbud", body: "Hvad mangler der af kultur- og fritidstilbud i dit område?", is_active: true, allow_followup: true, followup_prompt: "", sort_order: 1 },
-    { id: "q10", theme_id: "t5", title: "Foreningsliv", body: "Hvordan kan vi få flere til at deltage i foreningslivet?", is_active: true, allow_followup: true, followup_prompt: "", sort_order: 2 },
-  ],
-  responses: [],
-  metadata: [],
-  citizens: [],
-  adminUsers: [
-    { id: "a1", email: "admin@norddjurs.dk", password: "norddjurs2025", name: "Administrator" },
-    { id: "a2", email: "nicklas@norddjurs.dk", password: "norddjurs2025", name: "Nicklas" },
-  ],
-  aiSettings: {
-    systemPrompt: `Du er en venlig og nysgerrig samtalepartner i en borgerdialog for Norddjurs Kommune. Din opgave er at stille ét opfølgningsspørgsmål til en borger, der netop har delt sin holdning.\n\nRegler:\n- Stil KUN ét spørgsmål\n- Spørgsmålet skal være åbent (ikke ja/nej)\n- Brug et uformelt, venligt dansk\n- Hold det kort (max 2 sætninger)\n- Vær nysgerrig, ikke konfronterende\n- Brug aldrig fagsprog eller politisk jargon`,
-    perspectiveThreshold: 30,
-  },
-});
 
 // ─── Utility ───
 const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 const fmt = (d) => new Date(d).toLocaleDateString("da-DK", { day: "numeric", month: "short", year: "numeric" });
 
-const blobToBase64 = (blob) => new Promise((resolve, reject) => {
-  const reader = new FileReader();
-  reader.onloadend = () => resolve(reader.result);
-  reader.onerror = reject;
-  reader.readAsDataURL(blob);
-});
-
-const base64ToBlob = (dataUrl) => {
-  const [header, data] = dataUrl.split(",");
-  const mime = header.match(/:(.*?);/)[1];
-  const bytes = atob(data);
-  const arr = new Uint8Array(bytes.length);
-  for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
-  return new Blob([arr], { type: mime });
-};
-
 const AREAS = ["Grenaa", "Auning", "Ørsted", "Glesborg", "Allingåbro", "Bønnerup", "Trustrup", "Vivild", "Hemmed", "Ørum", "Andet"];
 const AGE_GROUPS = ["Under 18", "18-29", "30-44", "45-59", "60-74", "75+"];
 const ROLES = ["Borger", "Medarbejder i kommunen", "Erhvervsdrivende", "Andet"];
-
-// ─── Transcription ───
-const TRANSCRIBE_URL = "http://localhost:8321/transcribe";
-
-const transcribeAudio = async (blob) => {
-  try {
-    const formData = new FormData();
-    formData.append("file", blob, "optagelse.webm");
-    const res = await fetch(TRANSCRIBE_URL, { method: "POST", body: formData });
-    if (!res.ok) throw new Error("Transcription failed");
-    const data = await res.json();
-    return data.text || null;
-  } catch (e) {
-    console.warn("Transskribering ikke tilgængelig:", e.message);
-    return null;
-  }
-};
-
-// ─── AI Follow-up ───
-const generateFollowup = async (answer, questionText, themeName, aiSettings, otherResponses) => {
-  const hasPerspectives = otherResponses && otherResponses.length >= (aiSettings?.perspectiveThreshold || 30);
-  let perspectiveBlock = "";
-  if (hasPerspectives) {
-    const sample = otherResponses.slice(-20).map(r => r.text_content).filter(Boolean).join("\n- ");
-    perspectiveBlock = `\nDu har også adgang til en sammenfatning af, hvad andre borgere har sagt om det samme emne. Brug det til at skabe dialog — fx: "Mange andre nævner X — hvad tænker du om det?" Men gør det naturligt, ikke som en quiz.\n\nAndre borgeres perspektiver:\n- ${sample}`;
-  }
-
-  const systemPrompt = aiSettings?.systemPrompt || defaultDB().aiSettings.systemPrompt;
-
-  try {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 1000,
-        messages: [{
-          role: "user",
-          content: `${systemPrompt}${perspectiveBlock}\n\nBorgerens svar:\n${answer}\n\nTema: ${themeName}\nSpørgsmål borgeren svarede på: ${questionText}\n\nStil ét opfølgningsspørgsmål:`
-        }],
-      }),
-    });
-    const data = await res.json();
-    const text = data.content?.map(c => c.text || "").join("") || "";
-    return text.trim();
-  } catch (e) {
-    console.error("AI followup error:", e);
-    return "Kan du fortælle lidt mere om, hvad der ligger bag din holdning?";
-  }
-};
-
-// ─── AI Analysis for dashboard ───
-const generateAnalysis = async (responses, type) => {
-  if (!responses.length) return null;
-  const sample = responses.slice(-50).map(r => r.text_content).filter(Boolean);
-  if (!sample.length) return null;
-
-  const prompts = {
-    sentiment: `Analysér disse borgersvar og klassificér dem som positiv, neutral eller negativ. Svar KUN med JSON: {"positiv": <antal>, "neutral": <antal>, "negativ": <antal>}\n\nSvar:\n${sample.map((s,i) => `${i+1}. ${s}`).join("\n")}`,
-    themes: `Identificér de 5 vigtigste temaer/emner i disse borgersvar. Svar KUN med JSON: [{"tema": "...", "antal": <antal>}, ...]\n\nSvar:\n${sample.map((s,i) => `${i+1}. ${s}`).join("\n")}`,
-    quotes: `Udvælg de 3 mest repræsentative og stærke citater fra disse borgersvar. Svar KUN med JSON: [{"citat": "...", "kontekst": "kort beskrivelse"}]\n\nSvar:\n${sample.map((s,i) => `${i+1}. ${s}`).join("\n")}`,
-  };
-
-  try {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 1000,
-        messages: [{ role: "user", content: prompts[type] }],
-      }),
-    });
-    const data = await res.json();
-    const text = data.content?.map(c => c.text || "").join("") || "";
-    const cleaned = text.replace(/```json|```/g, "").trim();
-    return JSON.parse(cleaned);
-  } catch {
-    return null;
-  }
-};
 
 // ─── Fonts ───
 const fontLink = "https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,500;0,9..144,700;1,9..144,400&display=swap";
@@ -321,15 +154,8 @@ const AudioRecorder = ({ onRecorded }) => {
     clearInterval(timerRef.current);
   };
 
-  const confirmAudio = () => {
-    onRecorded(audioBlob);
-  };
-
-  const resetAudio = () => {
-    setAudioBlob(null);
-    setElapsed(0);
-  };
-
+  const confirmAudio = () => { onRecorded(audioBlob); };
+  const resetAudio = () => { setAudioBlob(null); setElapsed(0); };
   const fmtTime = (s) => `${Math.floor(s/60)}:${String(s%60).padStart(2,"0")}`;
 
   if (audioBlob) {
@@ -439,11 +265,14 @@ const DonutChart = ({ data, size = 160 }) => {
 // ─── CITIZEN FLOW ─────────────────────────────
 // ═══════════════════════════════════════════════
 
-
-const CitizenFlow = ({ db, setDB, onAdminClick }) => {
+const CitizenFlow = ({ onAdminClick }) => {
   // Steps: 0=welcome, 1=auth, 2=consent, 3=theme, 4=question, 5=followup, 6=metadata, 7=thanks, 8=profile
   const [step, setStep] = useState(0);
+  const [citizenToken, setCitizenToken] = useState(null);
   const [citizen, setCitizen] = useState(null);
+  const [themes, setThemes] = useState([]);
+  const [themeQuestions, setThemeQuestions] = useState([]);
+  const [myResponses, setMyResponses] = useState([]);
   const [authMode, setAuthMode] = useState("login");
   const [authEmail, setAuthEmail] = useState("");
   const [authCode, setAuthCode] = useState("");
@@ -467,68 +296,132 @@ const CitizenFlow = ({ db, setDB, onAdminClick }) => {
   const [followupInputMode, setFollowupInputMode] = useState("text");
   const [profileConfirmDelete, setProfileConfirmDelete] = useState(false);
   const [metaSaved, setMetaSaved] = useState(false);
+  const [lastResponseId, setLastResponseId] = useState(null);
   const sessionId = useRef(uid());
   const startTime = useRef(Date.now());
   const prevStep = useRef(0);
 
-  const loadCitizenMeta = (cit) => {
-    const meta = db.metadata.find(m => m.citizen_id === cit.id);
-    if (meta) { setMetaAge(meta.age_group || ""); setMetaArea(meta.area || ""); setMetaRole(meta.role || ""); }
-  };
+  // Load themes on mount
+  useEffect(() => {
+    fetch(`${API_BASE}/api/themes`)
+      .then(r => r.ok ? r.json() : [])
+      .then(setThemes)
+      .catch(() => {});
+  }, []);
+
+  // Load my responses when entering profile
+  useEffect(() => {
+    if (step === 8 && citizenToken) {
+      apiFetch("/api/citizen/responses", {}, citizenToken)
+        .then(r => r.ok ? r.json() : [])
+        .then(setMyResponses)
+        .catch(() => {});
+    }
+  }, [step, citizenToken]);
 
   // ─── Auth ───
   const handleRegister = async () => {
     if (!authEmail.trim() || !authCode.trim()) { setAuthError("Udfyld både email og kode"); return; }
     if (authCode.length < 4) { setAuthError("Koden skal være mindst 4 tegn"); return; }
-    if (db.citizens.find(c => c.email.toLowerCase() === authEmail.trim().toLowerCase())) { setAuthError("Denne email er allerede registreret — prøv at logge ind"); return; }
-    const newCitizen = { id: uid(), email: authEmail.trim().toLowerCase(), code: authCode, created_at: new Date().toISOString(), consent_given: false };
-    const updatedDB = { ...db, citizens: [...db.citizens, newCitizen] };
-    setDB(updatedDB); await saveDB(updatedDB);
-    setCitizen(newCitizen); setAuthError(""); setStep(2);
+    setLoading(true);
+    try {
+      const res = await apiFetch("/api/citizen/register", {
+        method: "POST",
+        body: JSON.stringify({ email: authEmail.trim(), code: authCode }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        setAuthError(err.detail || "Registrering fejlede");
+        return;
+      }
+      const data = await res.json();
+      setCitizenToken(data.token);
+      setCitizen(data.citizen);
+      setAuthError("");
+      setStep(2);
+    } catch {
+      setAuthError("Kunne ikke forbinde til serveren");
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleLogin = async () => {
     if (!authEmail.trim() || !authCode.trim()) { setAuthError("Udfyld både email og kode"); return; }
-    const found = db.citizens.find(c => c.email.toLowerCase() === authEmail.trim().toLowerCase() && c.code === authCode);
-    if (!found) { setAuthError("Forkert email eller kode"); return; }
-    setCitizen(found); loadCitizenMeta(found); setAuthError("");
-    if (found.consent_given) { setConsent(true); setShareMetadata(true); setStep(3); }
-    else { setStep(2); }
+    setLoading(true);
+    try {
+      const res = await apiFetch("/api/citizen/login", {
+        method: "POST",
+        body: JSON.stringify({ email: authEmail.trim(), code: authCode }),
+      });
+      if (!res.ok) { setAuthError("Forkert email eller kode"); return; }
+      const data = await res.json();
+      setCitizenToken(data.token);
+      setCitizen(data.citizen);
+      setAuthError("");
+      // Load existing metadata for profile form pre-fill
+      const meRes = await apiFetch("/api/citizen/me", {}, data.token);
+      if (meRes.ok) {
+        const me = await meRes.json();
+        if (me.metadata) {
+          setMetaAge(me.metadata.age_group || "");
+          setMetaArea(me.metadata.area || "");
+          setMetaRole(me.metadata.role || "");
+        }
+      }
+      if (data.citizen.consent_given) {
+        setConsent(true);
+        setShareMetadata(true);
+        setStep(3);
+      } else {
+        setStep(2);
+      }
+    } catch {
+      setAuthError("Kunne ikke forbinde til serveren");
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleLogout = () => { setCitizen(null); setAuthEmail(""); setAuthCode(""); setAuthError(""); setStep(0); };
+  const handleLogout = () => {
+    setCitizenToken(null);
+    setCitizen(null);
+    setAuthEmail("");
+    setAuthCode("");
+    setAuthError("");
+    setStep(0);
+  };
 
   // ─── Profile actions ───
   const handleDeleteAllData = async () => {
     if (!citizen) return;
-    db.responses.filter(r => r.citizen_id === citizen.id).forEach(r => {
-      try { window.storage.delete(`audio-${r.id}`); } catch {}
-    });
-    const updatedDB = { ...db, responses: db.responses.filter(r => r.citizen_id !== citizen.id), metadata: db.metadata.filter(m => m.citizen_id !== citizen.id), citizens: db.citizens.filter(c => c.id !== citizen.id) };
-    setDB(updatedDB); await saveDB(updatedDB);
-    setCitizen(null); setProfileConfirmDelete(false); setStep(0);
+    await apiFetch("/api/citizen/delete-all", { method: "DELETE" }, citizenToken);
+    setCitizenToken(null);
+    setCitizen(null);
+    setProfileConfirmDelete(false);
+    setStep(0);
   };
 
   const handleSaveMetadata = async () => {
     if (!citizen) return;
-    const existingIdx = db.metadata.findIndex(m => m.citizen_id === citizen.id);
-    const meta = { id: existingIdx >= 0 ? db.metadata[existingIdx].id : uid(), citizen_id: citizen.id, session_id: sessionId.current, age_group: metaAge, area: metaArea, role: metaRole, device_type: /Mobi|Android/i.test(navigator.userAgent) ? "mobile" : "desktop", time_spent_seconds: Math.round((Date.now() - startTime.current) / 1000), created_at: existingIdx >= 0 ? db.metadata[existingIdx].created_at : new Date().toISOString(), updated_at: new Date().toISOString() };
-    let updatedMeta = [...db.metadata];
-    if (existingIdx >= 0) updatedMeta[existingIdx] = meta; else updatedMeta.push(meta);
-    const updatedDB = { ...db, metadata: updatedMeta };
-    setDB(updatedDB); await saveDB(updatedDB);
-    setMetaSaved(true); setTimeout(() => setMetaSaved(false), 2000);
+    await apiFetch("/api/citizen/metadata", {
+      method: "PUT",
+      body: JSON.stringify({ age_group: metaAge || null, area: metaArea || null, role: metaRole || null }),
+    }, citizenToken);
+    setMetaSaved(true);
+    setTimeout(() => setMetaSaved(false), 2000);
   };
 
   const handleConsent = async () => {
     if (!consent || !citizen) return;
-    const updatedCitizens = db.citizens.map(c => c.id === citizen.id ? { ...c, consent_given: true } : c);
-    const updatedDB = { ...db, citizens: updatedCitizens };
+    await apiFetch("/api/citizen/consent", {
+      method: "PUT",
+      body: JSON.stringify({ consent_given: true }),
+    }, citizenToken);
     setCitizen({ ...citizen, consent_given: true });
-    setDB(updatedDB); await saveDB(updatedDB); setStep(3);
+    setStep(3);
   };
 
-  const themeQuestions = selectedTheme ? db.questions.filter(q => q.theme_id === selectedTheme.id && q.is_active).sort((a,b) => a.sort_order - b.sort_order) : [];
   const currentQuestion = themeQuestions[questionIndex] || null;
 
   const goToNextQuestion = () => {
@@ -541,47 +434,98 @@ const CitizenFlow = ({ db, setDB, onAdminClick }) => {
   const submitAnswer = async () => {
     if (answerType === "text" && answer.trim().length < 20) return;
     setLoading(true);
-    const responseId = uid();
-    let textContent = answerType === "text" ? answer : "[Lydbesvarelse — transskriberer...]";
-    let audioBase64 = null;
-    if (audioBlob) {
-      try { audioBase64 = await blobToBase64(audioBlob); } catch {}
-      const transcript = await transcribeAudio(audioBlob);
-      textContent = transcript || "[Lydbesvarelse — transskribering ikke tilgængelig]";
+    let responseId = null;
+    let textContent = answer;
+
+    try {
+      if (audioBlob) {
+        const formData = new FormData();
+        formData.append("file", audioBlob, "optagelse.webm");
+        const url = `${API_BASE}/api/responses/audio?question_id=${encodeURIComponent(currentQuestion.id)}&session_id=${encodeURIComponent(sessionId.current)}`;
+        const headers = citizenToken ? { Authorization: `Bearer ${citizenToken}` } : {};
+        const res = await fetch(url, { method: "POST", headers, body: formData });
+        if (res.ok) {
+          const data = await res.json();
+          responseId = data.id;
+          textContent = data.transcription || data.text_content || "[Lydbesvarelse]";
+        }
+      } else {
+        const res = await apiFetch("/api/responses", {
+          method: "POST",
+          body: JSON.stringify({
+            question_id: currentQuestion.id,
+            session_id: sessionId.current,
+            text_content: answer,
+            response_type: "text",
+            is_followup: false,
+          }),
+        }, citizenToken);
+        if (res.ok) {
+          const data = await res.json();
+          responseId = data.id;
+        }
+      }
+
+      setLastResponseId(responseId);
+
+      if (currentQuestion.allow_followup) {
+        const res = await apiFetch("/api/followup", {
+          method: "POST",
+          body: JSON.stringify({
+            answer: textContent,
+            question_id: currentQuestion.id,
+            theme_name: selectedTheme.name,
+            question_text: currentQuestion.body,
+          }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setFollowupQ(data.followup_question || "");
+        }
+      }
+    } catch (e) {
+      console.error("Submit error:", e);
     }
-    const newResponse = { id: responseId, question_id: currentQuestion.id, citizen_id: citizen?.id || null, session_id: sessionId.current, response_type: answerType, text_content: textContent, media_url: audioBase64, media_duration_seconds: audioBlob ? Math.round(audioBlob.size / 6000) : null, is_followup: false, parent_response_id: null, followup_question_text: null, created_at: new Date().toISOString() };
-    const updatedDB = { ...db, responses: [...db.responses, newResponse] };
-    setDB(updatedDB); await saveDB(updatedDB);
-    if (currentQuestion.allow_followup) {
-      const otherResponses = db.responses.filter(r => r.question_id === currentQuestion.id && !r.is_followup);
-      const fq = await generateFollowup(textContent, currentQuestion.body, selectedTheme.name, db.aiSettings, otherResponses);
-      setFollowupQ(fq);
-    }
-    setLoading(false); setStep(5);
+
+    setLoading(false);
+    setStep(5);
   };
 
   const submitFollowup = async () => {
-    let textContent = followupAnswerType === "text" ? followupAnswer : "[Lydbesvarelse — transskriberer...]";
-    const parentResp = db.responses.filter(r => r.session_id === sessionId.current && !r.is_followup).pop();
-    let audioBase64 = null;
-    if (followupAudioBlob) {
-      try { audioBase64 = await blobToBase64(followupAudioBlob); } catch {}
-      const transcript = await transcribeAudio(followupAudioBlob);
-      textContent = transcript || "[Lydbesvarelse — transskribering ikke tilgængelig]";
+    const textContent = followupAnswerType === "text" ? followupAnswer : "";
+    try {
+      if (followupAudioBlob) {
+        const formData = new FormData();
+        formData.append("file", followupAudioBlob, "optagelse.webm");
+        const url = `${API_BASE}/api/responses/audio?question_id=${encodeURIComponent(currentQuestion.id)}&session_id=${encodeURIComponent(sessionId.current)}&is_followup=true${lastResponseId ? `&parent_response_id=${encodeURIComponent(lastResponseId)}` : ""}&followup_question_text=${encodeURIComponent(followupQ)}`;
+        const headers = citizenToken ? { Authorization: `Bearer ${citizenToken}` } : {};
+        await fetch(url, { method: "POST", headers, body: formData });
+      } else {
+        await apiFetch("/api/responses", {
+          method: "POST",
+          body: JSON.stringify({
+            question_id: currentQuestion.id,
+            session_id: sessionId.current,
+            text_content: textContent,
+            response_type: "text",
+            is_followup: true,
+            parent_response_id: lastResponseId,
+            followup_question_text: followupQ,
+          }),
+        }, citizenToken);
+      }
+    } catch (e) {
+      console.error("Followup submit error:", e);
     }
-    const newResponse = { id: uid(), question_id: currentQuestion.id, citizen_id: citizen?.id || null, session_id: sessionId.current, response_type: followupAnswerType, text_content: textContent, media_url: audioBase64, media_duration_seconds: followupAudioBlob ? Math.round(followupAudioBlob.size / 6000) : null, is_followup: true, parent_response_id: parentResp?.id || null, followup_question_text: followupQ, created_at: new Date().toISOString() };
-    const updatedDB = { ...db, responses: [...db.responses, newResponse] };
-    setDB(updatedDB); await saveDB(updatedDB); goToNextQuestion();
+    goToNextQuestion();
   };
 
   const submitMetadata = async () => {
-    const existingIdx = db.metadata.findIndex(m => m.citizen_id === citizen?.id);
-    const meta = { id: existingIdx >= 0 ? db.metadata[existingIdx].id : uid(), citizen_id: citizen?.id || null, session_id: sessionId.current, age_group: metaAge, area: metaArea, role: metaRole, device_type: /Mobi|Android/i.test(navigator.userAgent) ? "mobile" : "desktop", time_spent_seconds: Math.round((Date.now() - startTime.current) / 1000), created_at: new Date().toISOString() };
-    let updatedMeta = [...db.metadata];
-    if (existingIdx >= 0) updatedMeta[existingIdx] = { ...db.metadata[existingIdx], ...meta, id: db.metadata[existingIdx].id };
-    else updatedMeta.push(meta);
-    const updatedDB = { ...db, metadata: updatedMeta };
-    setDB(updatedDB); await saveDB(updatedDB); setStep(7);
+    await apiFetch("/api/citizen/metadata", {
+      method: "PUT",
+      body: JSON.stringify({ age_group: metaAge || null, area: metaArea || null, role: metaRole || null }),
+    }, citizenToken);
+    setStep(7);
   };
 
   const cs = { maxWidth: 480, margin: "0 auto", minHeight: "100vh", padding: "24px 20px", display: "flex", flexDirection: "column" };
@@ -646,8 +590,8 @@ const CitizenFlow = ({ db, setDB, onAdminClick }) => {
             style={{ width: "100%", padding: 16, borderRadius: 14, border: "2px solid var(--border)", fontSize: 16, outline: "none" }}
             onFocus={e => e.target.style.borderColor = "var(--primary)"} onBlur={e => e.target.style.borderColor = "var(--border)"} />
         </div>
-        <button onClick={authMode === "login" ? handleLogin : handleRegister} style={bp}>
-          {authMode === "login" ? "Log ind" : "Opret konto"}
+        <button onClick={authMode === "login" ? handleLogin : handleRegister} disabled={loading} style={{ ...bp, opacity: loading ? 0.6 : 1 }}>
+          {loading ? "Vent..." : (authMode === "login" ? "Log ind" : "Opret konto")}
         </button>
         <button onClick={() => { setAuthMode(authMode === "login" ? "register" : "login"); setAuthError(""); }}
           style={{ marginTop: 16, background: "none", border: "none", color: "var(--primary)", fontSize: 15, cursor: "pointer", fontFamily: "DM Sans", fontWeight: 500 }}>
@@ -694,10 +638,17 @@ const CitizenFlow = ({ db, setDB, onAdminClick }) => {
       <h2 style={{ fontSize: 24, fontWeight: 700, marginBottom: 8 }}>Vælg et tema</h2>
       <p style={{ fontSize: 15, color: "var(--muted)", marginBottom: 24, lineHeight: 1.5 }}>Hvad vil du gerne sige noget om?</p>
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-        {db.themes.sort((a,b) => a.sort_order - b.sort_order).map(theme => {
-          const qCount = db.questions.filter(q => q.theme_id === theme.id && q.is_active).length;
+        {themes.map(theme => {
+          const qCount = theme.question_count || 0;
           return (
-            <button key={theme.id} onClick={() => { if(qCount > 0) { setSelectedTheme(theme); setQuestionIndex(0); setStep(4); }}}
+            <button key={theme.id} onClick={async () => {
+              if (qCount === 0) return;
+              setSelectedTheme(theme);
+              setQuestionIndex(0);
+              const res = await fetch(`${API_BASE}/api/themes/${theme.id}/questions`);
+              if (res.ok) setThemeQuestions(await res.json());
+              setStep(4);
+            }}
               style={{ padding: "22px 20px", borderRadius: 16, border: "2px solid var(--border)", background: "var(--card)", cursor: qCount > 0 ? "pointer" : "not-allowed", display: "flex", alignItems: "center", gap: 16, transition: "all 0.2s", textAlign: "left", opacity: qCount > 0 ? 1 : 0.4 }}
               onMouseEnter={e => { if(qCount > 0) { e.currentTarget.style.borderColor = "var(--primary)"; e.currentTarget.style.background = "var(--primary-pale)"; }}}
               onMouseLeave={e => { e.currentTarget.style.borderColor = "var(--border)"; e.currentTarget.style.background = "var(--card)"; }}>
@@ -716,7 +667,7 @@ const CitizenFlow = ({ db, setDB, onAdminClick }) => {
   // ── Step 4: Question ──
   if (step === 4 && currentQuestion) return (
     <div style={cs} className="fade-in">
-      <TopBar onBack={() => { setStep(3); setSelectedTheme(null); setAnswer(""); setAudioBlob(null); }} backLabel="Skift tema" />
+      <TopBar onBack={() => { setStep(3); setSelectedTheme(null); setThemeQuestions([]); setAnswer(""); setAudioBlob(null); }} backLabel="Skift tema" />
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
         <div style={{ background: "var(--primary-pale)", borderRadius: 12, padding: "8px 14px", display: "inline-flex", alignItems: "center", gap: 8 }}>
           <span>{selectedTheme.icon}</span><span style={{ fontSize: 13, fontWeight: 500, color: "var(--primary)" }}>{selectedTheme.name}</span>
@@ -815,9 +766,9 @@ const CitizenFlow = ({ db, setDB, onAdminClick }) => {
         <p style={{ fontSize: 16, color: "var(--muted)", lineHeight: 1.6, maxWidth: 340, marginBottom: 16 }}>Dit svar er med til at forme fremtidens Norddjurs.</p>
         <div style={{ background: "var(--accent-light)", borderRadius: 16, padding: "20px 24px", marginBottom: 32, maxWidth: 360 }}>
           <p style={{ fontSize: 15, fontWeight: 600, color: "var(--accent)", marginBottom: 4 }}>📅 Borgermøde</p>
-          <p style={{ fontSize: 15, lineHeight: 1.5 }}>19. august 2025 — kom og hør, hvad borgerne i Norddjurs mener. Alle er velkomne!</p>
+          <p style={{ fontSize: 15, lineHeight: 1.5 }}>19. august 2026 — kom og hør, hvad borgerne i Norddjurs mener. Alle er velkomne!</p>
         </div>
-        <button onClick={() => { setStep(3); setSelectedTheme(null); setQuestionIndex(0); setAnswer(""); setAudioBlob(null); setFollowupQ(""); setFollowupAnswer(""); setFollowupAudioBlob(null); setInputMode("text"); setFollowupInputMode("text"); sessionId.current = uid(); startTime.current = Date.now(); }} style={bs}>Besvar et nyt tema</button>
+        <button onClick={() => { setStep(3); setSelectedTheme(null); setThemeQuestions([]); setQuestionIndex(0); setAnswer(""); setAudioBlob(null); setFollowupQ(""); setFollowupAnswer(""); setFollowupAudioBlob(null); setInputMode("text"); setFollowupInputMode("text"); sessionId.current = uid(); startTime.current = Date.now(); }} style={bs}>Besvar et nyt tema</button>
         <button onClick={() => { prevStep.current = 7; setStep(8); }} style={{ marginTop: 12, background: "none", border: "none", color: "var(--primary)", fontSize: 15, cursor: "pointer", fontFamily: "DM Sans", fontWeight: 500 }}>👤 Gå til min profil</button>
       </div>
     </div>
@@ -825,7 +776,7 @@ const CitizenFlow = ({ db, setDB, onAdminClick }) => {
 
   // ── Step 8: Profile ──
   if (step === 8 && citizen) {
-    const myResponses = db.responses.filter(r => r.citizen_id === citizen.id && !r.is_followup);
+    const mainResponses = myResponses.filter(r => !r.is_followup);
     return (
       <div style={cs} className="fade-in">
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
@@ -854,15 +805,15 @@ const CitizenFlow = ({ db, setDB, onAdminClick }) => {
 
         {/* My responses */}
         <div style={{ background: "var(--card)", borderRadius: 16, padding: 20, border: "1px solid var(--border)", marginBottom: 20 }}>
-          <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 12 }}>Mine besvarelser ({myResponses.length})</h3>
-          {myResponses.length === 0 ? (
+          <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 12 }}>Mine besvarelser ({mainResponses.length})</h3>
+          {mainResponses.length === 0 ? (
             <p style={{ fontSize: 14, color: "var(--muted)" }}>Du har ikke besvaret nogen spørgsmål endnu.</p>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {myResponses.map(r => {
-                const q = db.questions.find(q2 => q2.id === r.question_id);
-                const t = q ? db.themes.find(t2 => t2.id === q.theme_id) : null;
-                const followup = db.responses.find(f => f.parent_response_id === r.id);
+              {mainResponses.map(r => {
+                const q = r.question;
+                const t = r.theme;
+                const followup = r.followup_response;
                 return (
                   <div key={r.id} style={{ padding: 14, background: "var(--bg)", borderRadius: 10 }}>
                     <div style={{ fontSize: 12, color: "var(--primary)", fontWeight: 500, marginBottom: 4 }}>{t?.icon} {t?.name} — {fmt(r.created_at)}</div>
@@ -908,14 +859,50 @@ const CitizenFlow = ({ db, setDB, onAdminClick }) => {
 // ─── ADMIN PANEL ──────────────────────────────
 // ═══════════════════════════════════════════════
 
-const AdminPanel = ({ db, setDB, onLogout }) => {
+const AdminPanel = ({ adminToken, onLogout }) => {
   const [tab, setTab] = useState("dashboard");
+  const [themes, setThemes] = useState([]);
+  const [questions, setQuestions] = useState([]);
+  const [responses, setResponses] = useState([]);
+  const [dashboard, setDashboard] = useState(null);
+  const [aiSettings, setAiSettings] = useState({ system_prompt: "", perspective_threshold: 30 });
   const [editingQ, setEditingQ] = useState(null);
   const [analysisResults, setAnalysisResults] = useState({});
   const [analysisLoading, setAnalysisLoading] = useState(false);
   const [filterTheme, setFilterTheme] = useState("");
   const [filterAge, setFilterAge] = useState("");
   const [filterArea, setFilterArea] = useState("");
+
+  const adminFetch = (path, options = {}) => apiFetch(path, options, adminToken);
+
+  // Load initial data
+  useEffect(() => {
+    const load = async () => {
+      const [themesRes, questionsRes, dashRes, aiRes] = await Promise.all([
+        fetch(`${API_BASE}/api/themes`),
+        adminFetch("/api/admin/questions"),
+        adminFetch("/api/admin/dashboard"),
+        adminFetch("/api/admin/ai-settings"),
+      ]);
+      if (themesRes.ok) setThemes(await themesRes.json());
+      if (questionsRes.ok) setQuestions(await questionsRes.json());
+      if (dashRes.ok) setDashboard(await dashRes.json());
+      if (aiRes.ok) setAiSettings(await aiRes.json());
+    };
+    load();
+  }, []);
+
+  // Load responses when tab or filters change
+  useEffect(() => {
+    if (tab !== "responses") return;
+    const params = new URLSearchParams();
+    if (filterTheme) params.set("theme_id", filterTheme);
+    if (filterAge) params.set("age_group", filterAge);
+    if (filterArea) params.set("area", filterArea);
+    adminFetch(`/api/admin/responses?${params}`)
+      .then(r => r.ok ? r.json() : { responses: [] })
+      .then(data => setResponses(data.responses || []));
+  }, [tab, filterTheme, filterAge, filterArea]);
 
   const tabs = [
     { id: "dashboard", label: "Dashboard", icon: "chart" },
@@ -924,74 +911,74 @@ const AdminPanel = ({ db, setDB, onLogout }) => {
     { id: "settings", label: "AI-indstillinger", icon: "settings" },
   ];
 
-  const responsesPerTheme = db.themes.map(t => ({
+  const responsesPerTheme = (dashboard?.per_theme || []).map(t => ({
     label: t.icon + " " + t.name.split(" ")[0],
-    value: db.responses.filter(r => {
-      const q = db.questions.find(q2 => q2.id === r.question_id);
-      return q && q.theme_id === t.id && !r.is_followup;
-    }).length,
+    value: t.count,
   }));
-
-  const filteredResponses = db.responses.filter(r => {
-    if (r.is_followup) return false;
-    if (filterTheme) {
-      const q = db.questions.find(q2 => q2.id === r.question_id);
-      if (!q || q.theme_id !== filterTheme) return false;
-    }
-    if (filterAge || filterArea) {
-      const meta = db.metadata.find(m => (m.citizen_id && r.citizen_id ? m.citizen_id === r.citizen_id : m.session_id === r.session_id));
-      if (filterAge && (!meta || meta.age_group !== filterAge)) return false;
-      if (filterArea && (!meta || meta.area !== filterArea)) return false;
-    }
-    return true;
-  }).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
   const runAnalysis = async (type) => {
     setAnalysisLoading(true);
-    const textResponses = db.responses.filter(r => r.text_content && !r.text_content.startsWith("["));
-    const result = await generateAnalysis(textResponses, type);
-    setAnalysisResults(prev => ({ ...prev, [type]: result }));
+    try {
+      const res = await adminFetch("/api/admin/analysis", {
+        method: "POST",
+        body: JSON.stringify({ analysis_type: type }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setAnalysisResults(prev => ({ ...prev, [type]: data.result }));
+      }
+    } catch (e) {
+      console.error("Analysis error:", e);
+    }
     setAnalysisLoading(false);
   };
 
-  const exportCSV = () => {
-    const rows = [["ID", "Tema", "Spørgsmål", "Svar", "Type", "Opfølgning", "Dato", "Alder", "Område", "Rolle"]];
-    db.responses.filter(r => !r.is_followup).forEach(r => {
-      const q = db.questions.find(q2 => q2.id === r.question_id);
-      const t = q ? db.themes.find(t2 => t2.id === q.theme_id) : null;
-      const meta = db.metadata.find(m => (m.citizen_id && r.citizen_id ? m.citizen_id === r.citizen_id : m.session_id === r.session_id));
-      const followup = db.responses.find(f => f.parent_response_id === r.id);
-      rows.push([
-        r.id, t?.name || "", q?.body || "", r.text_content || "", r.response_type,
-        followup?.text_content || "", r.created_at, meta?.age_group || "", meta?.area || "", meta?.role || "",
-      ]);
-    });
-    const csv = rows.map(row => row.map(c => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n");
-    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a"); a.href = url; a.download = "norddjurs-besvarelser.csv"; a.click();
+  const exportCSV = async () => {
+    const res = await adminFetch("/api/admin/export/csv");
+    if (res.ok) {
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "norddjurs-besvarelser.csv";
+      a.click();
+      URL.revokeObjectURL(url);
+    }
   };
 
   const saveQuestion = async (q) => {
-    const updated = db.questions.map(existing => existing.id === q.id ? q : existing);
-    if (!db.questions.find(e => e.id === q.id)) updated.push(q);
-    const newDB = { ...db, questions: updated };
-    setDB(newDB);
-    await saveDB(newDB);
+    const isNew = !questions.find(e => e.id === q.id);
+    const res = isNew
+      ? await adminFetch("/api/admin/questions", { method: "POST", body: JSON.stringify(q) })
+      : await adminFetch(`/api/admin/questions/${q.id}`, { method: "PUT", body: JSON.stringify(q) });
+    if (res.ok) {
+      const updated = await res.json();
+      setQuestions(prev => isNew ? [...prev, updated] : prev.map(e => e.id === updated.id ? updated : e));
+    }
     setEditingQ(null);
   };
 
   const toggleQuestion = async (qId) => {
-    const updated = db.questions.map(q => q.id === qId ? { ...q, is_active: !q.is_active } : q);
-    const newDB = { ...db, questions: updated };
-    setDB(newDB);
-    await saveDB(newDB);
+    const q = questions.find(q => q.id === qId);
+    const res = await adminFetch(`/api/admin/questions/${qId}`, {
+      method: "PUT",
+      body: JSON.stringify({ is_active: !q.is_active }),
+    });
+    if (res.ok) {
+      const updated = await res.json();
+      setQuestions(prev => prev.map(q => q.id === qId ? updated : q));
+    }
   };
 
   const saveAISettings = async (settings) => {
-    const newDB = { ...db, aiSettings: settings };
-    setDB(newDB);
-    await saveDB(newDB);
+    setAiSettings(settings);
+    await adminFetch("/api/admin/ai-settings", {
+      method: "PUT",
+      body: JSON.stringify({
+        system_prompt: settings.system_prompt,
+        perspective_threshold: settings.perspective_threshold,
+      }),
+    });
   };
 
   const sidebarStyle = {
@@ -1047,7 +1034,7 @@ const AdminPanel = ({ db, setDB, onLogout }) => {
           <div className="fade-in">
             <h1 style={{ fontSize: 28, fontWeight: 700, marginBottom: 8 }}>Dashboard</h1>
             <p style={{ color: "var(--muted)", marginBottom: 28 }}>
-              {db.responses.filter(r => !r.is_followup).length} besvarelser i alt
+              {dashboard?.total_responses ?? "—"} besvarelser i alt
             </p>
 
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 20 }}>
@@ -1057,26 +1044,20 @@ const AdminPanel = ({ db, setDB, onLogout }) => {
               </div>
               <div style={cardStyle}>
                 <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 16 }}>Aldersfordeling</h3>
-                <DonutChart data={AGE_GROUPS.map(ag => ({
-                  label: ag,
-                  value: db.metadata.filter(m => m.age_group === ag).length,
-                }))} />
+                <DonutChart data={dashboard?.age_distribution || []} />
               </div>
             </div>
 
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
               <div style={cardStyle}>
                 <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 16 }}>Områdefordeling</h3>
-                <DonutChart data={AREAS.map(a => ({
-                  label: a,
-                  value: db.metadata.filter(m => m.area === a).length,
-                }))} />
+                <DonutChart data={dashboard?.area_distribution || []} />
               </div>
               <div style={cardStyle}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
                   <h3 style={{ fontSize: 16, fontWeight: 600 }}>AI-analyse</h3>
                 </div>
-                {db.responses.filter(r => r.text_content && !r.text_content.startsWith("[")).length < 3 ? (
+                {(dashboard?.total_responses || 0) < 3 ? (
                   <p style={{ color: "var(--muted)", fontSize: 14 }}>Mindst 3 tekstbesvarelser krævet for analyse.</p>
                 ) : (
                   <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -1115,7 +1096,7 @@ const AdminPanel = ({ db, setDB, onLogout }) => {
           <div className="fade-in">
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
               <h1 style={{ fontSize: 28, fontWeight: 700 }}>Spørgsmål</h1>
-              <button onClick={() => setEditingQ({ id: uid(), theme_id: db.themes[0].id, title: "", body: "", is_active: true, allow_followup: true, followup_prompt: "", sort_order: 99 })}
+              <button onClick={() => setEditingQ({ id: uid(), theme_id: themes[0]?.id || "", title: "", body: "", is_active: true, allow_followup: true, followup_prompt: "", sort_order: 99 })}
                 style={{ padding: "10px 20px", borderRadius: 10, border: "none", background: "var(--primary)", color: "#fff", cursor: "pointer", fontFamily: "DM Sans", fontSize: 14, fontWeight: 600 }}>
                 + Nyt spørgsmål
               </button>
@@ -1123,13 +1104,13 @@ const AdminPanel = ({ db, setDB, onLogout }) => {
 
             {editingQ && (
               <div style={{ ...cardStyle, borderColor: "var(--primary)" }}>
-                <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 16 }}>{db.questions.find(q => q.id === editingQ.id) ? "Rediger" : "Nyt"} spørgsmål</h3>
+                <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 16 }}>{questions.find(q => q.id === editingQ.id) ? "Rediger" : "Nyt"} spørgsmål</h3>
                 <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
                   <div>
                     <label style={{ fontSize: 13, fontWeight: 600, marginBottom: 4, display: "block" }}>Tema</label>
                     <select value={editingQ.theme_id} onChange={e => setEditingQ({ ...editingQ, theme_id: e.target.value })}
                       style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid var(--border)", fontSize: 14 }}>
-                      {db.themes.map(t => <option key={t.id} value={t.id}>{t.icon} {t.name}</option>)}
+                      {themes.map(t => <option key={t.id} value={t.id}>{t.icon} {t.name}</option>)}
                     </select>
                   </div>
                   <div>
@@ -1158,8 +1139,8 @@ const AdminPanel = ({ db, setDB, onLogout }) => {
               </div>
             )}
 
-            {db.themes.map(theme => {
-              const themeQs = db.questions.filter(q => q.theme_id === theme.id).sort((a,b) => a.sort_order - b.sort_order);
+            {themes.map(theme => {
+              const themeQs = questions.filter(q => q.theme_id === theme.id).sort((a,b) => a.sort_order - b.sort_order);
               return (
                 <div key={theme.id} style={{ marginBottom: 24 }}>
                   <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 10, display: "flex", alignItems: "center", gap: 8 }}>
@@ -1170,9 +1151,8 @@ const AdminPanel = ({ db, setDB, onLogout }) => {
                       <div style={{ flex: 1 }}>
                         <div style={{ fontWeight: 600, fontSize: 14 }}>{q.title}</div>
                         <div style={{ fontSize: 13, color: "var(--muted)", marginTop: 2 }}>{q.body}</div>
-                        <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 4, display: "flex", gap: 12 }}>
+                        <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 4 }}>
                           <span>{q.allow_followup ? "✅ Opfølgning" : "❌ Ingen opfølgning"}</span>
-                          <span>{db.responses.filter(r => r.question_id === q.id && !r.is_followup).length} svar</span>
                         </div>
                       </div>
                       <div style={{ display: "flex", gap: 8 }}>
@@ -1204,7 +1184,7 @@ const AdminPanel = ({ db, setDB, onLogout }) => {
               <select value={filterTheme} onChange={e => setFilterTheme(e.target.value)}
                 style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid var(--border)", fontSize: 13 }}>
                 <option value="">Alle temaer</option>
-                {db.themes.map(t => <option key={t.id} value={t.id}>{t.icon} {t.name}</option>)}
+                {themes.map(t => <option key={t.id} value={t.id}>{t.icon} {t.name}</option>)}
               </select>
               <select value={filterAge} onChange={e => setFilterAge(e.target.value)}
                 style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid var(--border)", fontSize: 13 }}>
@@ -1216,14 +1196,14 @@ const AdminPanel = ({ db, setDB, onLogout }) => {
                 <option value="">Alle områder</option>
                 {AREAS.map(a => <option key={a} value={a}>{a}</option>)}
               </select>
-              <span style={{ fontSize: 13, color: "var(--muted)", alignSelf: "center" }}>{filteredResponses.length} resultater</span>
+              <span style={{ fontSize: 13, color: "var(--muted)", alignSelf: "center" }}>{responses.length} resultater</span>
             </div>
 
-            {filteredResponses.map(r => {
-              const q = db.questions.find(q2 => q2.id === r.question_id);
-              const t = q ? db.themes.find(t2 => t2.id === q.theme_id) : null;
-              const meta = db.metadata.find(m => (m.citizen_id && r.citizen_id ? m.citizen_id === r.citizen_id : m.session_id === r.session_id));
-              const followup = db.responses.find(f => f.parent_response_id === r.id);
+            {responses.map(r => {
+              const q = r.question;
+              const t = r.theme;
+              const meta = r.metadata;
+              const followup = r.followup_response;
               return (
                 <div key={r.id} style={cardStyle}>
                   <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
@@ -1238,16 +1218,10 @@ const AdminPanel = ({ db, setDB, onLogout }) => {
                     <span style={{ fontSize: 12, color: "var(--muted)" }}>{fmt(r.created_at)}</span>
                   </div>
                   <p style={{ fontSize: 13, color: "var(--muted)", marginBottom: 4 }}>{q?.body}</p>
-                  {r.media_url && r.response_type === "audio" && (
-                    <audio controls src={r.media_url} style={{ width: "100%", maxWidth: 400, borderRadius: 8, marginBottom: 8 }} />
-                  )}
                   <p style={{ fontSize: 15, lineHeight: 1.6, marginBottom: 8 }}>{r.text_content}</p>
                   {followup && (
                     <div style={{ borderLeft: "3px solid var(--accent)", paddingLeft: 14, marginTop: 12 }}>
                       <p style={{ fontSize: 12, fontWeight: 600, color: "var(--accent)", marginBottom: 4 }}>Opfølgning: {followup.followup_question_text}</p>
-                      {followup.media_url && followup.response_type === "audio" && (
-                        <audio controls src={followup.media_url} style={{ width: "100%", maxWidth: 400, borderRadius: 8, marginBottom: 6 }} />
-                      )}
                       <p style={{ fontSize: 14, lineHeight: 1.5 }}>{followup.text_content}</p>
                     </div>
                   )}
@@ -1261,7 +1235,7 @@ const AdminPanel = ({ db, setDB, onLogout }) => {
                 </div>
               );
             })}
-            {filteredResponses.length === 0 && (
+            {responses.length === 0 && (
               <div style={{ textAlign: "center", padding: 60, color: "var(--muted)" }}>
                 <p style={{ fontSize: 16 }}>Ingen besvarelser endnu</p>
                 <p style={{ fontSize: 14, marginTop: 8 }}>Besvarelser dukker op her, når borgere har svaret.</p>
@@ -1276,8 +1250,8 @@ const AdminPanel = ({ db, setDB, onLogout }) => {
             <h1 style={{ fontSize: 28, fontWeight: 700, marginBottom: 24 }}>AI-indstillinger</h1>
             <div style={cardStyle}>
               <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 14 }}>System-prompt til opfølgning</h3>
-              <textarea value={db.aiSettings.systemPrompt}
-                onChange={e => saveAISettings({ ...db.aiSettings, systemPrompt: e.target.value })}
+              <textarea value={aiSettings.system_prompt}
+                onChange={e => saveAISettings({ ...aiSettings, system_prompt: e.target.value })}
                 style={{ width: "100%", minHeight: 200, padding: 14, borderRadius: 10, border: "1px solid var(--border)", fontSize: 14, lineHeight: 1.6, resize: "vertical", fontFamily: "DM Sans" }} />
             </div>
             <div style={cardStyle}>
@@ -1285,8 +1259,8 @@ const AdminPanel = ({ db, setDB, onLogout }) => {
               <p style={{ fontSize: 14, color: "var(--muted)", marginBottom: 12 }}>
                 Antal besvarelser før andre borgeres perspektiver inkluderes i opfølgningen.
               </p>
-              <input type="number" value={db.aiSettings.perspectiveThreshold}
-                onChange={e => saveAISettings({ ...db.aiSettings, perspectiveThreshold: parseInt(e.target.value) || 30 })}
+              <input type="number" value={aiSettings.perspective_threshold}
+                onChange={e => saveAISettings({ ...aiSettings, perspective_threshold: parseInt(e.target.value) || 30 })}
                 style={{ width: 100, padding: "10px 12px", borderRadius: 8, border: "1px solid var(--border)", fontSize: 14 }} />
               <span style={{ fontSize: 14, color: "var(--muted)", marginLeft: 10 }}>svar</span>
             </div>
@@ -1301,15 +1275,32 @@ const AdminPanel = ({ db, setDB, onLogout }) => {
 // ─── LOGIN SCREEN ─────────────────────────────
 // ═══════════════════════════════════════════════
 
-const LoginScreen = ({ db, onLogin, onBack }) => {
+const LoginScreen = ({ onLogin, onBack }) => {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  const handleLogin = () => {
-    const user = db.adminUsers.find(u => u.email === email && u.password === password);
-    if (user) onLogin(user);
-    else setError("Forkert email eller adgangskode");
+  const handleLogin = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const res = await fetch(`${API_BASE}/api/admin/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        onLogin(data.token);
+      } else {
+        setError("Forkert email eller adgangskode");
+      }
+    } catch {
+      setError("Kunne ikke forbinde til serveren");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -1324,13 +1315,10 @@ const LoginScreen = ({ db, onLogin, onBack }) => {
       <input type="password" placeholder="Adgangskode" value={password} onChange={e => { setPassword(e.target.value); setError(""); }}
         onKeyDown={e => e.key === "Enter" && handleLogin()}
         style={{ width: "100%", padding: "14px 16px", borderRadius: 12, border: "1px solid var(--border)", marginBottom: 20, fontSize: 16 }} />
-      <button onClick={handleLogin}
-        style={{ width: "100%", padding: "16px", borderRadius: 12, border: "none", background: "var(--primary)", color: "#fff", fontSize: 16, fontWeight: 600, cursor: "pointer", fontFamily: "DM Sans" }}>
-        Log ind
+      <button onClick={handleLogin} disabled={loading}
+        style={{ width: "100%", padding: "16px", borderRadius: 12, border: "none", background: "var(--primary)", color: "#fff", fontSize: 16, fontWeight: 600, cursor: loading ? "wait" : "pointer", fontFamily: "DM Sans", opacity: loading ? 0.7 : 1 }}>
+        {loading ? "Logger ind..." : "Log ind"}
       </button>
-      <p style={{ fontSize: 12, color: "var(--muted)", marginTop: 16, textAlign: "center" }}>
-        Test-login: admin@norddjurs.dk / norddjurs2025
-      </p>
     </div>
   );
 };
@@ -1340,52 +1328,20 @@ const LoginScreen = ({ db, onLogin, onBack }) => {
 // ═══════════════════════════════════════════════
 
 export default function App() {
-  const [db, setDB] = useState(null);
   const [view, setView] = useState("citizen"); // citizen | login | admin
-  const [adminUser, setAdminUser] = useState(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    (async () => {
-      const stored = await getDB();
-      if (stored) {
-        // Merge in any missing fields from defaults
-        const def = defaultDB();
-        const merged = {
-          ...def,
-          ...stored,
-          aiSettings: { ...def.aiSettings, ...(stored.aiSettings || {}) },
-        };
-        // Restore audio data from separate storage keys
-        const hydrated = await hydrateAudio(merged);
-        setDB(hydrated);
-      } else {
-        const def = defaultDB();
-        setDB(def);
-        await saveDB(def);
-      }
-      setLoading(false);
-    })();
-  }, []);
-
-  if (loading || !db) return (
-    <div style={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: "100vh" }}>
-      <style>{css}</style>
-      <div className="spin" style={{ width: 32, height: 32, border: "3px solid var(--border)", borderTop: "3px solid var(--primary)", borderRadius: "50%" }} />
-    </div>
-  );
+  const [adminToken, setAdminToken] = useState(null);
 
   return (
     <>
       <style>{css}</style>
       {view === "citizen" && (
-        <CitizenFlow db={db} setDB={setDB} onAdminClick={() => setView("login")} />
+        <CitizenFlow onAdminClick={() => setView("login")} />
       )}
       {view === "login" && (
-        <LoginScreen db={db} onLogin={(user) => { setAdminUser(user); setView("admin"); }} onBack={() => setView("citizen")} />
+        <LoginScreen onLogin={(token) => { setAdminToken(token); setView("admin"); }} onBack={() => setView("citizen")} />
       )}
-      {view === "admin" && adminUser && (
-        <AdminPanel db={db} setDB={setDB} onLogout={() => { setAdminUser(null); setView("citizen"); }} />
+      {view === "admin" && adminToken && (
+        <AdminPanel adminToken={adminToken} onLogout={() => { setAdminToken(null); setView("citizen"); }} />
       )}
     </>
   );

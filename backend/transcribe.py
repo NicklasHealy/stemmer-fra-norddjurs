@@ -1,14 +1,21 @@
-"""Transskribering med Alexandra Instituttets danske Whisper-model."""
+"""Transskribering med CoRal-projektets danske ASR-model (Røst v2 wav2vec2).
+
+Modellen kører 100% lokalt — ingen data forlader serveren.
+Første kørsel downloader modelfilerne (~1.2 GB) til lokal HuggingFace-cache.
+"""
 
 import os
 import time
+import numpy as np
 import torch
-from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, pipeline
+import torchaudio
+from transformers import pipeline
 from dotenv import load_dotenv
 
 load_dotenv()
 
-MODEL_ID = os.getenv("WHISPER_MODEL", "alexandrainst/whisper-medium-danish")
+MODEL_ID = os.getenv("WHISPER_MODEL", "CoRal-project/roest-wav2vec2-315m-v2")
+TARGET_SAMPLE_RATE = 16000
 
 # Lazy loading — modellen indlæses først når den bruges
 _pipe = None
@@ -19,47 +26,53 @@ def _get_pipeline():
     if _pipe is not None:
         return _pipe
 
-    print(f"Indlæser Whisper-model: {MODEL_ID} ...")
+    print(f"Indlæser transskriberings-model: {MODEL_ID} ...")
     start = time.time()
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    torch_dtype = torch.float16 if device == "cuda" else torch.float32
-
-    model = AutoModelForSpeechSeq2Seq.from_pretrained(
-        MODEL_ID,
-        torch_dtype=torch_dtype,
-        low_cpu_mem_usage=True,
-    )
-    model.to(device)
-
-    processor = AutoProcessor.from_pretrained(MODEL_ID)
+    device = 0 if torch.cuda.is_available() else -1
+    device_name = "GPU (CUDA)" if device == 0 else "CPU"
 
     _pipe = pipeline(
         "automatic-speech-recognition",
-        model=model,
-        tokenizer=processor.tokenizer,
-        feature_extractor=processor.feature_extractor,
-        torch_dtype=torch_dtype,
+        model=MODEL_ID,
         device=device,
-        chunk_length_s=30,
-        batch_size=1,
     )
 
-    print(f"Whisper klar! ({time.time() - start:.1f}s, device={device})")
+    print(f"Model klar! ({time.time() - start:.1f}s, device={device_name})")
     return _pipe
 
 
 def transcribe_file(file_path: str) -> str:
-    """Transskribér en lydfil og returnér teksten."""
+    """Transskribér en lydfil og returnér teksten.
+
+    Understøtter wav, mp3, webm/opus (kræver ffmpeg installeret).
+    Resampler automatisk til 16kHz mono som modellen forventer.
+    """
     pipe = _get_pipeline()
 
     print(f"Transskriberer: {file_path}")
     start = time.time()
 
+    # Indlæs lyd via torchaudio (understøtter webm/opus hvis ffmpeg er installeret)
+    waveform, sample_rate = torchaudio.load(file_path)
+
+    # Stereo → mono
+    if waveform.shape[0] > 1:
+        waveform = waveform.mean(dim=0, keepdim=True)
+
+    # Resample til 16kHz hvis nødvendigt
+    if sample_rate != TARGET_SAMPLE_RATE:
+        resampler = torchaudio.transforms.Resample(
+            orig_freq=sample_rate,
+            new_freq=TARGET_SAMPLE_RATE,
+        )
+        waveform = resampler(waveform)
+
+    # Konvertér til numpy float32 array (1D)
+    audio_array = waveform.squeeze().numpy().astype(np.float32)
+
     result = pipe(
-        file_path,
-        generate_kwargs={"language": "danish", "task": "transcribe"},
-        return_timestamps=False,
+        {"array": audio_array, "sampling_rate": TARGET_SAMPLE_RATE},
     )
 
     text = result["text"].strip()
