@@ -1,15 +1,28 @@
+# ─── Web framework ───
 fastapi==0.115.0
 uvicorn[standard]==0.30.0
-sqlalchemy==2.0.35
-python-dotenv==1.0.1
 python-multipart==0.0.9
+
+# ─── Database ───
+sqlalchemy==2.0.35
+pyodbc>=5.0.0          # SQL Server i produktion (kræver ODBC Driver 18 for SQL Server)
+
+# ─── Auth ───
 passlib[bcrypt]==1.7.4
+bcrypt==4.0.1
 python-jose[cryptography]==3.3.0
+
+# ─── Validering ───
+pydantic[email]==2.9.0  # [email] kræves til EmailStr
+
+# ─── Konfiguration ───
+python-dotenv==1.0.1
+
+# ─── AI / Ollama ───
 requests==2.32.0
-pydantic==2.9.0
+
+# ─── Transskribering (CoRal Røst v2) ───
 transformers==4.46.0
 torch==2.5.0
-torchaudio==2.5.0
-pyctcdecode>=0.5.0
-kenlm>=0.1.0
-bcrypt==4.0.1
+numpy>=1.26.0
+av>=12.0.0              # PyAV: bundlet ffmpeg-bindings — håndterer webm/opus/mp3 uden ekstern ffmpeg

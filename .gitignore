@@ -50,4 +50,9 @@ backend/models/
 
 # Local config
 *.local
+
+
+# Andre filer, der ikke skal committes
 CLAUDE.md
+*.pdf
+*.code-workspace

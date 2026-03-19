@@ -39,7 +39,7 @@ def _call_ollama(system_prompt: str, user_message: str, max_retries: int = 2) ->
                         "num_predict": 300,
                     },
                 },
-                timeout=30,
+                timeout=75,
             )
             response.raise_for_status()
             result = response.json()
@@ -88,12 +88,12 @@ Spørgsmål borgeren svarede på: {question_text}
 
 Stil ét opfølgningsspørgsmål:"""
 
-    result = _call_ollama(prompt, user_message)
+    result = _call_ollama(prompt, user_message, max_retries=1)
 
     if result:
         # Rens output — fjern eventuelle "thinking" tags fra Qwen
-        if "<think>" in result:
-            result = result.split("</think>")[-1].strip()
+        if "<tool_call>" in result:
+            result = result.split("<tool_call>")[-1].strip()
         return result
 
     return "Kan du fortælle lidt mere om, hvad der ligger bag din holdning?"

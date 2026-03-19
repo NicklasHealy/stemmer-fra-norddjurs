@@ -73,6 +73,8 @@ class Response(Base):
     is_followup = Column(Boolean, default=False)
     parent_response_id = Column(String, ForeignKey("responses.id"), nullable=True)
     followup_question_text = Column(Text, nullable=True)
+    is_excluded = Column(Boolean, default=False)   # Admin soft-delete (opgave 8a)
+    is_flagged = Column(Boolean, default=False)    # Indholdsmoderation (opgave 8c)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     question = relationship("Question", back_populates="responses")
@@ -127,3 +129,23 @@ class AISettings(Base):
     system_prompt = Column(Text, nullable=False)
     perspective_threshold = Column(Integer, default=30)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class Area(Base):
+    __tablename__ = "areas"
+
+    id = Column(String(36), primary_key=True, default=new_uuid)
+    name = Column(String(100), unique=True, nullable=False)
+    sort_order = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class ModerationRule(Base):
+    __tablename__ = "moderation_rules"
+
+    id = Column(String, primary_key=True, default=new_uuid)
+    rule_type = Column(String(20), default="word")  # word, regex
+    pattern = Column(String(500), nullable=False)
+    description = Column(String(300), nullable=True)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)

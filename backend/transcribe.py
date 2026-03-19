@@ -2,13 +2,16 @@
 
 Modellen kører 100% lokalt — ingen data forlader serveren.
 Første kørsel downloader modelfilerne (~1.2 GB) til lokal HuggingFace-cache.
+
+Bruger PyAV til at dekode lyd — understøtter webm, mp3, wav, ogg osv.
+uden at kræve ekstern ffmpeg-installation.
 """
 
 import os
 import time
 import numpy as np
 import torch
-import torchaudio
+import av
 from transformers import pipeline
 from dotenv import load_dotenv
 
@@ -42,34 +45,53 @@ def _get_pipeline():
     return _pipe
 
 
+def _load_audio(file_path: str) -> np.ndarray:
+    """Indlæs lydfil og returnér 16kHz mono float32 numpy-array.
+
+    Bruger PyAV (bundlet ffmpeg) — understøtter webm/opus, mp3, wav, ogg osv.
+    """
+    container = av.open(file_path)
+    resampler = av.AudioResampler(
+        format="fltp",    # float32 planar
+        layout="mono",
+        rate=TARGET_SAMPLE_RATE,
+    )
+
+    chunks = []
+    for frame in container.decode(audio=0):
+        frame.pts = None
+        resampled = resampler.resample(frame)
+        if resampled:
+            frames = resampled if isinstance(resampled, list) else [resampled]
+            for f in frames:
+                chunks.append(f.to_ndarray()[0])
+
+    # Flush resampler
+    flushed = resampler.resample(None)
+    if flushed:
+        frames = flushed if isinstance(flushed, list) else [flushed]
+        for f in frames:
+            chunks.append(f.to_ndarray()[0])
+
+    container.close()
+
+    if not chunks:
+        raise RuntimeError("Ingen lyd fundet i filen")
+
+    return np.concatenate(chunks).astype(np.float32)
+
+
 def transcribe_file(file_path: str) -> str:
     """Transskribér en lydfil og returnér teksten.
 
-    Understøtter wav, mp3, webm/opus (kræver ffmpeg installeret).
-    Resampler automatisk til 16kHz mono som modellen forventer.
+    Understøtter webm, mp3, wav, ogg og alle andre formater PyAV forstår.
     """
     pipe = _get_pipeline()
 
     print(f"Transskriberer: {file_path}")
     start = time.time()
 
-    # Indlæs lyd via torchaudio (understøtter webm/opus hvis ffmpeg er installeret)
-    waveform, sample_rate = torchaudio.load(file_path)
-
-    # Stereo → mono
-    if waveform.shape[0] > 1:
-        waveform = waveform.mean(dim=0, keepdim=True)
-
-    # Resample til 16kHz hvis nødvendigt
-    if sample_rate != TARGET_SAMPLE_RATE:
-        resampler = torchaudio.transforms.Resample(
-            orig_freq=sample_rate,
-            new_freq=TARGET_SAMPLE_RATE,
-        )
-        waveform = resampler(waveform)
-
-    # Konvertér til numpy float32 array (1D)
-    audio_array = waveform.squeeze().numpy().astype(np.float32)
+    audio_array = _load_audio(file_path)
 
     result = pipe(
         {"array": audio_array, "sampling_rate": TARGET_SAMPLE_RATE},
