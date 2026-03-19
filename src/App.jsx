@@ -372,7 +372,7 @@ const CitizenFlow = ({ onAdminClick }) => {
   // ─── Submit answer + hent opfølgning (kaldes efter auth + samtykke) ───
   const submitAndFollowup = async (token, citizenObj, pending) => {
     const pa = pending || pendingAnswer;
-    if (!pa) return;
+    if (!pa) { goToNextQuestion(); return; }
     setLoading(true);
     let responseId = null;
     let textContent = pa.text_content;
@@ -564,13 +564,25 @@ const CitizenFlow = ({ onAdminClick }) => {
 
   const handleConsent = async () => {
     if (!consent || !citizen) return;
-    await apiFetch("/api/citizen/consent", {
-      method: "PUT",
-      body: JSON.stringify({ consent_given: true }),
-    }, citizenToken);
-    const updatedCitizen = { ...citizen, consent_given: true };
-    setCitizen(updatedCitizen);
-    await submitAndFollowup(citizenToken, updatedCitizen, pendingAnswer);
+    setLoading(true);
+    try {
+      await apiFetch("/api/citizen/consent", {
+        method: "PUT",
+        body: JSON.stringify({ consent_given: true }),
+      }, citizenToken);
+      const updatedCitizen = { ...citizen, consent_given: true };
+      setCitizen(updatedCitizen);
+      if (pendingAnswer) {
+        await submitAndFollowup(citizenToken, updatedCitizen, pendingAnswer);
+      } else {
+        goToNextQuestion();
+      }
+    } catch (e) {
+      console.error("Samtykke fejl:", e);
+      goToNextQuestion();
+    } finally {
+      setLoading(false);
+    }
   };
 
   const currentQuestion = themeQuestions[questionIndex] || null;
