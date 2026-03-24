@@ -16,10 +16,12 @@ import uuid
 import shutil
 import csv
 import io
-from datetime import datetime
+import secrets
+import string
+from datetime import datetime, timedelta
 from typing import Optional, List
 
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Query
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -30,10 +32,11 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from database import get_db, init_db, engine
+from database import get_db, init_db, migrate_db, engine
 from models import (
     Theme, Question, Citizen, Response, ResponseMetadata,
-    AnalysisCache, AdminUser, AISettings, Area, ModerationRule, Base,
+    AnalysisCache, AdminUser, AISettings, Area, ModerationRule, ConsentLog,
+    PasswordResetLog, Base,
 )
 from auth import (
     hash_password, verify_password, create_token,
@@ -56,6 +59,64 @@ app.add_middleware(
 # Mappe til lydoptagelser
 UPLOAD_DIR = os.getenv("UPLOAD_DIR", "./uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+# ─── Samtykke-version (opgave 14b) ───
+# Bump denne ved ændring af samtykketerms — borgere med lavere version bedes re-acceptere
+CURRENT_CONSENT_VERSION = 1
+
+# ─── Privatlivspolitik-tekst (opgave 12) ───
+PRIVACY_POLICY_TEXT = (
+    "# Privatlivspolitik — Stemmer fra Norddjurs\n\n"
+    "**Opdateret:** Maj 2026\n\n"
+    "---\n\n"
+    "## Dataansvarlig\n\n"
+    "Norddjurs Kommune\nTorvet 3, 8500 Grenaa\nTlf. 89 59 10 00\nnorddjurs@norddjurs.dk\n\n"
+    "## Databeskyttelsesrådgiver (DPO)\n\n"
+    "Databeskyttelsesrådgiver\ndbr@norddjurs.dk\nTlf. 89 59 15 23\n\n"
+    "---\n\n"
+    "## Formål med behandlingen\n\n"
+    "Norddjurs Kommune indsamler borgerholdninger via platformen 'Stemmer fra Norddjurs' til brug i kommunens "
+    "budgetproces for Budget 2027. Formålet er at sikre bred borgerhøring i projektet 'Sammen om Norddjurs'.\n\n"
+    "## Retsgrundlag\n\n"
+    "Behandlingen sker på grundlag af dit samtykke, jf. GDPR artikel 6, stk. 1, litra a. "
+    "Du kan til enhver tid trække dit samtykke tilbage.\n\n"
+    "---\n\n"
+    "## Hvilke oplysninger indsamler vi?\n\n"
+    "- **Email-adresse** — bruges til login\n"
+    "- **Adgangskode** — opbevares krypteret (bcrypt), aldrig i klartekst\n"
+    "- **Dine besvarelser** — tekst og/eller lydoptagelser (max 30 sekunder)\n"
+    "- **Frivillig metadata** — aldersgruppe og by/område\n\n"
+    "---\n\n"
+    "## AI-behandling\n\n"
+    "Dine svar bruges til at generere opfølgningsspørgsmål via en lokal AI-model (Qwen 14B via Ollama). "
+    "AI-modellen kører udelukkende på Norddjurs Kommunes egen server — ingen data sendes til eksterne tjenester. "
+    "AI-modellen træffer ingen automatiserede beslutninger, der påvirker dig.\n\n"
+    "---\n\n"
+    "## Opbevaring og sletning\n\n"
+    "Data opbevares sikkert på Norddjurs Kommunes servere og slettes senest februar 2027, "
+    "medmindre du selv sletter dem tidligere via din profil.\n\n"
+    "## Modtagere\n\n"
+    "Dine data behandles udelukkende af projektmedarbejdere i Norddjurs Kommune. "
+    "Anonymiserede og aggregerede resultater præsenteres for kommunens politikere.\n\n"
+    "---\n\n"
+    "## Dine rettigheder\n\n"
+    "- **Indsigt (art. 15):** Se dine data via din profil eller ved henvendelse til kommunen.\n"
+    "- **Berigtigelse (art. 16):** Ret oplysninger i din profil.\n"
+    "- **Sletning (art. 17):** Slet alle dine data via 'Træk samtykke tilbage' i din profil.\n"
+    "- **Begrænsning (art. 18):** Brug 'Frys mine data' i din profil — dine svar ekskluderes fra analyse.\n"
+    "- **Dataportabilitet (art. 20):** Download dine data som JSON via din profil.\n"
+    "- **Indsigelse (art. 21):** Kontakt DPO på dbr@norddjurs.dk.\n\n"
+    "## Tilbagetrækning af samtykke\n\n"
+    "Du kan til enhver tid trække dit samtykke tilbage via din profil. "
+    "Alle dine data slettes permanent, og handlingen kan ikke fortrydes.\n\n"
+    "---\n\n"
+    "## Klageadgang\n\n"
+    "Datatilsynet, Carl Jacobsens Vej 35, 2500 Valby\ndt@datatilsynet.dk\ndatatilsynet.dk\n\n"
+    "---\n\n"
+    "## Sikkerhed\n\n"
+    "Platformen anvender HTTPS, krypterede adgangskoder og JWT-tokens. "
+    "Al databehandling foregår inden for Norddjurs Kommunes netværk."
+)
 
 
 # ─── Password-validering (opgave 9b) ───
@@ -171,6 +232,19 @@ class ModerationRuleCreate(BaseModel):
     pattern: str
     description: Optional[str] = None
 
+class ChangePasswordRequest(BaseModel):
+    new_password: str
+    confirm_password: str
+
+
+def generate_temp_password() -> str:
+    """Genererer en tilfældig midlertidig adgangskode (12 tegn, opfylder kravene)."""
+    alphabet = string.ascii_letters + string.digits
+    while True:
+        pw = "".join(secrets.choice(alphabet) for _ in range(12))
+        if any(c.isupper() for c in pw) and any(c.islower() for c in pw) and any(c.isdigit() for c in pw):
+            return pw
+
 
 # ═══════════════════════════════════════════════
 # ─── CITIZEN AUTH ──────────────────────────────
@@ -204,6 +278,11 @@ def citizen_login(data: CitizenLogin, db: Session = Depends(get_db)):
     if not citizen or not verify_password(data.password, citizen.password_hash):
         raise HTTPException(401, "Forkert email eller adgangskode")
 
+    # Tjek om midlertidig adgangskode er udløbet
+    if citizen.must_change_password and citizen.temp_password_expires:
+        if datetime.utcnow() > citizen.temp_password_expires:
+            raise HTTPException(401, "Den midlertidige adgangskode er udløbet. Kontakt en administrator for at få en ny.")
+
     token = create_token({"sub": citizen.id, "role": "citizen"})
     return {"token": token, "citizen": _citizen_dict(citizen)}
 
@@ -224,11 +303,28 @@ def citizen_me(citizen: Citizen = Depends(get_current_citizen), db: Session = De
 
 
 @app.put("/api/citizen/consent")
-def citizen_consent(data: ConsentUpdate, citizen: Citizen = Depends(get_current_citizen), db: Session = Depends(get_db)):
+def citizen_consent(
+    data: ConsentUpdate,
+    request: Request,
+    citizen: Citizen = Depends(get_current_citizen),
+    db: Session = Depends(get_db),
+):
     citizen.consent_given = data.consent_given
     citizen.consent_given_at = datetime.utcnow() if data.consent_given else None
+    if data.consent_given:
+        citizen.consent_version = CURRENT_CONSENT_VERSION
+    # Opgave 14a: log samtykket
+    ip = request.client.host if request.client else None
+    log = ConsentLog(
+        id=str(uuid.uuid4()),
+        citizen_id=citizen.id,
+        consent_given=data.consent_given,
+        consent_version=CURRENT_CONSENT_VERSION,
+        ip_address=ip,
+    )
+    db.add(log)
     db.commit()
-    return {"ok": True, "consent_given": citizen.consent_given}
+    return {"ok": True, "consent_given": citizen.consent_given, "consent_version": citizen.consent_version}
 
 
 @app.put("/api/citizen/metadata")
@@ -298,6 +394,74 @@ def citizen_delete_response(
     db.delete(r)
     db.commit()
     return {"ok": True}
+
+
+# Opgave 12: Privatlivspolitik
+@app.get("/api/privacy-policy")
+def get_privacy_policy():
+    """Returnerer privatlivspolitikken som tekst (Markdown). Opdatér PRIVACY_POLICY_TEXT i main.py for at ændre indholdet."""
+    return {"version": CURRENT_CONSENT_VERSION, "text": PRIVACY_POLICY_TEXT}
+
+
+# Opgave 13b: Frys/frys-op borgers data
+@app.put("/api/citizen/freeze")
+def citizen_freeze(citizen: Citizen = Depends(get_current_citizen), db: Session = Depends(get_db)):
+    """Skifter frys-status. Frosne borgeres svar ekskluderes fra dashboard, analyse og AI-perspektiver."""
+    citizen.frozen = not citizen.frozen
+    db.commit()
+    return {"ok": True, "frozen": citizen.frozen}
+
+
+# Tvungen kodeordsskift (efter admin-nulstilling)
+@app.put("/api/citizen/change-password")
+def citizen_change_password(
+    data: ChangePasswordRequest,
+    citizen: Citizen = Depends(get_current_citizen),
+    db: Session = Depends(get_db),
+):
+    if data.new_password != data.confirm_password:
+        raise HTTPException(400, "Adgangskoderne er ikke ens")
+    err = validate_citizen_password(data.new_password)
+    if err:
+        raise HTTPException(400, err)
+    citizen.password_hash = hash_password(data.new_password)
+    citizen.must_change_password = False
+    citizen.temp_password_expires = None
+    db.commit()
+    return {"ok": True}
+
+
+# Opgave 13a: Dataportabilitet — download alle egne data
+@app.get("/api/citizen/export")
+def citizen_export(citizen: Citizen = Depends(get_current_citizen), db: Session = Depends(get_db)):
+    """Returnerer alle borgerens data som JSON (art. 20 dataportabilitet)."""
+    meta = db.query(ResponseMetadata).filter(ResponseMetadata.citizen_id == citizen.id).first()
+    responses = db.query(Response).filter(Response.citizen_id == citizen.id).order_by(Response.created_at).all()
+    result = []
+    for r in responses:
+        q = db.query(Question).filter(Question.id == r.question_id).first()
+        t = db.query(Theme).filter(Theme.id == q.theme_id).first() if q else None
+        result.append({
+            "id": r.id,
+            "question": q.body if q else None,
+            "theme": t.name if t else None,
+            "response_type": r.response_type,
+            "text_content": r.text_content,
+            "is_followup": r.is_followup,
+            "followup_question": r.followup_question_text,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        })
+    return {
+        "exported_at": datetime.utcnow().isoformat(),
+        "citizen": {
+            "email": citizen.email,
+            "created_at": citizen.created_at.isoformat() if citizen.created_at else None,
+            "consent_given": citizen.consent_given,
+            "consent_given_at": citizen.consent_given_at.isoformat() if citizen.consent_given_at else None,
+        },
+        "metadata": _meta_dict(meta) if meta else None,
+        "responses": result,
+    }
 
 
 # ═══════════════════════════════════════════════
@@ -497,13 +661,15 @@ def get_followup_question(data: FollowupRequest, db: Session = Depends(get_db)):
         print(f"Opfølgning sprunget over: {total_responses} svar (tærskel: {threshold})")
         return {"followup_question": None}
 
-    # Hent tekster til perspektiv-blok
+    # Hent tekster til perspektiv-blok (ekskluder frosne borgeres svar — opgave 13b)
+    frozen_citizen_ids = [c.id for c in db.query(Citizen.id).filter(Citizen.frozen == True).all()]
     other_texts = db.query(Response.text_content).filter(
         Response.question_id == data.question_id,
         Response.is_followup == False,
         Response.is_excluded == False,
         Response.is_flagged == False,
         Response.text_content.isnot(None),
+        ~Response.citizen_id.in_(frozen_citizen_ids) if frozen_citizen_ids else True,
     ).all()
     other_texts = [r.text_content for r in other_texts if r.text_content and not r.text_content.startswith("[")]
 
@@ -677,10 +843,14 @@ def admin_approve_response(
 
 @app.get("/api/admin/export/csv")
 def admin_export_csv(admin: AdminUser = Depends(get_current_admin), db: Session = Depends(get_db)):
-    responses = db.query(Response).filter(
+    frozen_ids = [c.id for c in db.query(Citizen.id).filter(Citizen.frozen == True).all()]
+    responses_query = db.query(Response).filter(
         Response.is_followup == False,
         Response.is_excluded == False,
-    ).order_by(Response.created_at.desc()).all()
+    )
+    if frozen_ids:
+        responses_query = responses_query.filter(~Response.citizen_id.in_(frozen_ids))
+    responses = responses_query.order_by(Response.created_at.desc()).all()
 
     output = io.StringIO()
     output.write("\ufeff")  # BOM for Excel
@@ -716,16 +886,21 @@ def admin_export_csv(admin: AdminUser = Depends(get_current_admin), db: Session 
 
 @app.get("/api/admin/dashboard")
 def admin_dashboard(admin: AdminUser = Depends(get_current_admin), db: Session = Depends(get_db)):
-    # Ekskluder udgåede besvarelser fra statistik
-    total_responses = db.query(Response).filter(
+    frozen_ids = [c.id for c in db.query(Citizen.id).filter(Citizen.frozen == True).all()]
+
+    def not_frozen(q):
+        return q.filter(~Response.citizen_id.in_(frozen_ids)) if frozen_ids else q
+
+    # Ekskluder udgåede og frosne besvarelser fra statistik
+    total_responses = not_frozen(db.query(Response).filter(
         Response.is_followup == False,
         Response.is_excluded == False,
-    ).count()
-    flagged_count = db.query(Response).filter(
+    )).count()
+    flagged_count = not_frozen(db.query(Response).filter(
         Response.is_followup == False,
         Response.is_flagged == True,
         Response.is_excluded == False,
-    ).count()
+    )).count()
     total_citizens = db.query(Citizen).count()
 
     themes = db.query(Theme).order_by(Theme.sort_order).all()
@@ -763,11 +938,13 @@ def admin_dashboard(admin: AdminUser = Depends(get_current_admin), db: Session =
 
 @app.post("/api/admin/analysis")
 def admin_run_analysis(data: AnalysisRequest, admin: AdminUser = Depends(get_current_admin), db: Session = Depends(get_db)):
+    frozen_ids = [c.id for c in db.query(Citizen.id).filter(Citizen.frozen == True).all()]
     query = db.query(Response.text_content).filter(
         Response.is_followup == False,
         Response.is_excluded == False,
         Response.is_flagged == False,
         Response.text_content.isnot(None),
+        ~Response.citizen_id.in_(frozen_ids) if frozen_ids else True,
     )
     if data.question_id:
         query = query.filter(Response.question_id == data.question_id)
@@ -870,6 +1047,115 @@ def admin_toggle_moderation_rule(rule_id: str, admin: AdminUser = Depends(get_cu
 
 
 # ═══════════════════════════════════════════════
+# ─── ADMIN: SAMTYKKE-OVERSIGT (opgave 14c) ─────
+# ═══════════════════════════════════════════════
+
+@app.get("/api/admin/consent-overview")
+def admin_consent_overview(admin: AdminUser = Depends(get_current_admin), db: Session = Depends(get_db)):
+    """Returnerer statistik over borgeres samtykker, fordelt på version og status."""
+    total_citizens = db.query(Citizen).count()
+    consent_given = db.query(Citizen).filter(Citizen.consent_given == True).count()
+    consent_withdrawn = db.query(Citizen).filter(Citizen.consent_given == False).count()
+    frozen_count = db.query(Citizen).filter(Citizen.frozen == True).count()
+
+    # Pr. samtykke-version
+    by_version = db.query(Citizen.consent_version, func.count(Citizen.id)).filter(
+        Citizen.consent_given == True
+    ).group_by(Citizen.consent_version).all()
+
+    # Nyeste samtykke-logs
+    recent_logs = db.query(ConsentLog).order_by(ConsentLog.created_at.desc()).limit(20).all()
+
+    return {
+        "current_consent_version": CURRENT_CONSENT_VERSION,
+        "total_citizens": total_citizens,
+        "consent_given": consent_given,
+        "consent_withdrawn": consent_withdrawn,
+        "frozen_count": frozen_count,
+        "by_version": [{"version": v, "count": c} for v, c in by_version],
+        "recent_logs": [
+            {
+                "citizen_id": l.citizen_id,
+                "consent_given": l.consent_given,
+                "consent_version": l.consent_version,
+                "ip_address": l.ip_address,
+                "created_at": l.created_at.isoformat() if l.created_at else None,
+            }
+            for l in recent_logs
+        ],
+    }
+
+
+# ═══════════════════════════════════════════════
+# ─── ADMIN: BORGERSTYRING & KODE-NULSTILLING ───
+# ═══════════════════════════════════════════════
+
+@app.get("/api/admin/citizens")
+def admin_search_citizens(
+    q: Optional[str] = None,
+    limit: int = 50,
+    admin: AdminUser = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    """Søg efter borgere via email. Returnerer liste med status."""
+    query = db.query(Citizen)
+    if q:
+        query = query.filter(Citizen.email.ilike(f"%{q}%"))
+    citizens = query.order_by(Citizen.created_at.desc()).limit(limit).all()
+    result = []
+    for c in citizens:
+        response_count = db.query(Response).filter(
+            Response.citizen_id == c.id,
+            Response.is_followup == False,
+        ).count()
+        result.append({
+            **_citizen_dict(c),
+            "response_count": response_count,
+            "temp_password_expires": c.temp_password_expires.isoformat() if c.temp_password_expires else None,
+        })
+    return result
+
+
+@app.post("/api/admin/citizens/{citizen_id}/reset-password")
+def admin_reset_citizen_password(
+    citizen_id: str,
+    admin: AdminUser = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    """Genererer en midlertidig adgangskode og returnerer den ÉN GANG til admin.
+    Borgeren tvinges til at skifte kode ved næste login.
+    Koden udløber efter 24 timer.
+    """
+    citizen = db.query(Citizen).filter(Citizen.id == citizen_id).first()
+    if not citizen:
+        raise HTTPException(404, "Borger ikke fundet")
+
+    temp_pw = generate_temp_password()
+    expires_at = datetime.utcnow() + timedelta(hours=24)
+
+    citizen.password_hash = hash_password(temp_pw)
+    citizen.must_change_password = True
+    citizen.temp_password_expires = expires_at
+
+    # Audit-log
+    log = PasswordResetLog(
+        id=str(uuid.uuid4()),
+        admin_user_id=admin.id,
+        target_citizen_id=citizen.id,
+        temp_password_expires=expires_at,
+    )
+    db.add(log)
+    db.commit()
+
+    return {
+        "ok": True,
+        "temp_password": temp_pw,         # Vises KUN denne ene gang
+        "expires_at": expires_at.isoformat(),
+        "citizen_email": citizen.email,
+    }
+
+
+# ═══════════════════════════════════════════════
 # ─── HEALTH & STARTUP ─────────────────────────
 # ═══════════════════════════════════════════════
 
@@ -880,7 +1166,15 @@ def health():
 
 
 def _citizen_dict(c: Citizen) -> dict:
-    return {"id": c.id, "email": c.email, "consent_given": c.consent_given, "created_at": c.created_at.isoformat() if c.created_at else None}
+    return {
+        "id": c.id,
+        "email": c.email,
+        "consent_given": c.consent_given,
+        "consent_version": c.consent_version if c.consent_version is not None else 1,
+        "frozen": c.frozen if c.frozen is not None else False,
+        "must_change_password": c.must_change_password if c.must_change_password is not None else False,
+        "created_at": c.created_at.isoformat() if c.created_at else None,
+    }
 
 def _theme_dict(t: Theme, db: Session) -> dict:
     q_count = db.query(Question).filter(Question.theme_id == t.id, Question.is_active == True).count()
@@ -991,7 +1285,7 @@ def seed_data(db: Session):
 if __name__ == "__main__":
     import uvicorn
 
-    init_db()
+    migrate_db()  # Opretter tabeller + tilføjer nye kolonner til eksisterende tabeller
 
     from database import SessionLocal
     db = SessionLocal()
@@ -1000,6 +1294,7 @@ if __name__ == "__main__":
 
     # Tjek Ollama ved opstart
     from ai_service import check_ollama_health
+    OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3:8b")
     health = check_ollama_health()
     if health["ollama"] == "ok":
         if health["model_available"]:
@@ -1008,7 +1303,7 @@ if __name__ == "__main__":
             print(f"⚠️  Ollama kører, men model '{health['model']}' er IKKE indlæst")
             print(f"   Kør: ollama pull {health['model']}")
             print(f"   Tilgængelige modeller: {', '.join(health['available_models']) or 'ingen'}")
-    else:
+    else:   
         print(f"❌ Ollama er IKKE tilgængelig — AI-opfølgning virker ikke")
         print(f"   Start Ollama og kør: ollama pull {OLLAMA_MODEL}")
 

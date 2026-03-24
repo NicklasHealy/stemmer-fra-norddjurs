@@ -17,7 +17,7 @@ const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(
 const fmt = (d) => new Date(d).toLocaleDateString("da-DK", { day: "numeric", month: "short", year: "numeric" });
 
 const AGE_GROUPS = ["Under 25", "25-39", "40-54", "55-69", "70+"];
-const PRIVACY_URL = "https://norddjurs.dk/om-kommunen/generel-information-om-norddjurs/databeskyttelse"; // URL til privatlivspolitik indsættes her
+const CURRENT_CONSENT_VERSION = 1; // Skal matche CURRENT_CONSENT_VERSION i backend/main.py
 
 // ─── Fonts ───
 const fontLink = "https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,500;0,9..144,700;1,9..144,400&display=swap";
@@ -297,7 +297,7 @@ const DonutChart = ({ data, size = 160 }) => {
 // ═══════════════════════════════════════════════
 
 const CitizenFlow = ({ onAdminClick }) => {
-  // Steps: 0=welcome, 1=theme, 2=question, 3=auth, 4=consent, 5=followup, 6=metadata, 7=thanks, 8=profile
+  // Steps: 0=welcome, 1=theme, 2=question, 3=auth, 4=consent, 5=followup, 6=metadata, 7=thanks, 8=profile, 9=privacy-policy, 10=change-password
   const [step, setStep] = useState(0);
   const [citizenToken, setCitizenToken] = useState(() => localStorage.getItem("citizenToken"));
   const [citizen, setCitizen] = useState(() => { try { return JSON.parse(localStorage.getItem("citizen")); } catch { return null; } });
@@ -327,6 +327,12 @@ const CitizenFlow = ({ onAdminClick }) => {
   const [inputMode, setInputMode] = useState("text");
   const [followupInputMode, setFollowupInputMode] = useState("text");
   const [profileConfirmDelete, setProfileConfirmDelete] = useState(false);
+  const [consentExpanded, setConsentExpanded] = useState(false);
+  const [privacyPolicyText, setPrivacyPolicyText] = useState(null);
+  const [citizenFrozen, setCitizenFrozen] = useState(false);
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [changePasswordError, setChangePasswordError] = useState("");
   const [metaSaved, setMetaSaved] = useState(false);
   const [lastResponseId, setLastResponseId] = useState(null);
   const sessionId = useRef(uid());
@@ -368,6 +374,16 @@ const CitizenFlow = ({ onAdminClick }) => {
   useEffect(() => {
     if (citizenToken) loadMyResponses();
   }, [citizenToken]);
+
+  // Hent privatlivspolitik når step 9 vises (opgave 12)
+  useEffect(() => {
+    if (step === 9 && !privacyPolicyText) {
+      apiFetch("/api/privacy-policy")
+        .then(r => r.ok ? r.json() : null)
+        .then(data => { if (data?.text) setPrivacyPolicyText(data.text); })
+        .catch(() => {});
+    }
+  }, [step]);
 
   // ─── Submit answer + hent opfølgning (kaldes efter auth + samtykke) ───
   const submitAndFollowup = async (token, citizenObj, pending) => {
@@ -519,7 +535,15 @@ const CitizenFlow = ({ onAdminClick }) => {
           setMetaArea(me.metadata.area || "");
         }
       }
-      if (data.citizen.consent_given) {
+      setCitizenFrozen(data.citizen.frozen || false);
+      // Tvungen kodeordsskift — sendes til step 10 og kan ikke navigere væk
+      if (data.citizen.must_change_password) {
+        setStep(10);
+        return;
+      }
+      const hasValidConsent = data.citizen.consent_given &&
+        (data.citizen.consent_version || 1) >= CURRENT_CONSENT_VERSION;
+      if (hasValidConsent) {
         setConsent(true);
         await submitAndFollowup(data.token, data.citizen, pendingAnswer);
       } else {
@@ -539,6 +563,7 @@ const CitizenFlow = ({ onAdminClick }) => {
     setAuthPassword("");
     setAuthError("");
     setMyResponses([]);
+    setCitizenFrozen(false);
     setStep(0);
   };
 
@@ -687,8 +712,8 @@ const CitizenFlow = ({ onAdminClick }) => {
         )}
       </div>
       <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", textAlign: "center" }}>
-        <div style={{ width: 80, height: 80, borderRadius: 20, background: "var(--primary)", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 24, boxShadow: "0 8px 24px rgba(45, 90, 61, 0.25)" }}>
-          <span style={{ fontSize: 36 }}>🗣️</span>
+        <div style={{ width: 120, height: 120, borderRadius: 20, background: "var(--primary)", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 24, boxShadow: "0 8px 24px rgba(45, 90, 61, 0.25)" }}>
+          <span style={{ fontSize: 52 }}>🗣️</span>
         </div>
         <h1 style={{ fontSize: 28, fontWeight: 700, marginBottom: 12, lineHeight: 1.2 }}>Stemmer fra Norddjurs</h1>
         <p style={{ fontSize: 17, color: "var(--muted)", lineHeight: 1.6, maxWidth: 340, marginBottom: 40 }}>Vi vil gerne høre din holdning til kommunens prioriteringer. Det tager kun 2-4 minutter.</p>
@@ -850,26 +875,82 @@ const CitizenFlow = ({ onAdminClick }) => {
     );
   }
 
-  // ── Step 4: Samtykke ──
+  // ── Step 4: Samtykke (GDPR art. 13 — opgave 11) ──
   if (step === 4) return (
     <div style={cs} className="fade-in">
       <TopBar onBack={() => setStep(3)} backLabel="Tilbage" />
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center" }}>
-        <h2 style={{ fontSize: 24, fontWeight: 700, marginBottom: 16 }}>Samtykke</h2>
-        <div style={{ background: "var(--card)", borderRadius: 16, padding: 20, marginBottom: 24, border: "1px solid var(--border)" }}>
-          <p style={{ fontSize: 15, lineHeight: 1.7, marginBottom: 16 }}>
-            Dine svar bruges til at give politikerne i Norddjurs Kommune indblik i borgernes holdninger. Alle svar behandles fortroligt og i overensstemmelse med{" "}
-            {PRIVACY_URL
-              ? <a href={PRIVACY_URL} target="_blank" rel="noopener noreferrer" style={{ color: "var(--primary)" }}>Norddjurs Kommunes privatlivspolitik</a>
-              : "Norddjurs Kommunes privatlivspolitik"}.
-          </p>
-          <p style={{ fontSize: 14, color: "var(--muted)", lineHeight: 1.6 }}>Du kan til enhver tid logge ind og trække dit samtykke tilbage — så slettes alle dine data. Undgå venligst at nævne dit fulde navn i lydoptagelser.</p>
+      <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+        <h2 style={{ fontSize: 24, fontWeight: 700, marginBottom: 4 }}>Samtykke</h2>
+        <p style={{ fontSize: 14, color: "var(--muted)", marginBottom: 20, lineHeight: 1.5 }}>Inden du gemmer dit svar, beder vi dig læse og acceptere nedenstående.</p>
+
+        {/* Kort opsummering */}
+        <div style={{ background: "var(--card)", borderRadius: 16, padding: 20, marginBottom: 16, border: "1px solid var(--border)" }}>
+          <p style={{ fontSize: 15, fontWeight: 600, marginBottom: 10 }}>Hvad vi bruger dine data til</p>
+          <ul style={{ paddingLeft: 20, fontSize: 14, lineHeight: 1.8, color: "var(--fg)" }}>
+            <li>Dine svar bruges i Norddjurs Kommunes budgetproces for Budget 2027</li>
+            <li>En lokal AI-model (kører på kommunens server — ingen data forlader netværket) bruger dit svar til at stille et opfølgningsspørgsmål</li>
+            <li>Anonymiserede resultater præsenteres for kommunens politikere</li>
+            <li>Du kan til enhver tid trække dit samtykke tilbage og slette alle dine data via din profil</li>
+          </ul>
+          <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--border)" }}>
+            <p style={{ fontSize: 13, color: "var(--muted)", lineHeight: 1.5 }}>
+              <strong>Dataansvarlig:</strong> Norddjurs Kommune, Torvet 3, 8500 Grenaa<br/>
+              <strong>Retsgrundlag:</strong> GDPR artikel 6, stk. 1, litra a (samtykke)<br/>
+              <strong>Opbevaring:</strong> Dine data slettes senest februar 2027
+            </p>
+          </div>
         </div>
-        <label style={{ display: "flex", alignItems: "flex-start", gap: 14, cursor: "pointer", marginBottom: 28, padding: 16, background: consent ? "var(--primary-pale)" : "var(--card)", borderRadius: 14, border: `2px solid ${consent ? "var(--primary)" : "var(--border)"}`, transition: "all 0.2s" }}>
+
+        {/* Accordion: Fuld tekst */}
+        <button
+          onClick={() => setConsentExpanded(!consentExpanded)}
+          style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", padding: "14px 18px", background: "var(--card)", border: "1px solid var(--border)", borderRadius: consentExpanded ? "12px 12px 0 0" : 12, cursor: "pointer", fontFamily: "DM Sans", fontSize: 14, fontWeight: 500, color: "var(--primary)", marginBottom: 0 }}
+        >
+          <span>Læs den fulde databehandlingsinformation</span>
+          <span style={{ transform: consentExpanded ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.2s", display: "inline-block" }}>▼</span>
+        </button>
+        {consentExpanded && (
+          <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderTop: "none", borderRadius: "0 0 12px 12px", padding: 18, marginBottom: 16, fontSize: 13, lineHeight: 1.7, color: "var(--fg)" }}>
+            <p style={{ fontWeight: 600, marginBottom: 6 }}>Dataansvarlig</p>
+            <p style={{ color: "var(--muted)", marginBottom: 12 }}>Norddjurs Kommune, Torvet 3, 8500 Grenaa, tlf. 89 59 10 00, norddjurs@norddjurs.dk</p>
+
+            <p style={{ fontWeight: 600, marginBottom: 6 }}>Databeskyttelsesrådgiver (DPO)</p>
+            <p style={{ color: "var(--muted)", marginBottom: 12 }}>dbr@norddjurs.dk, tlf. 89 59 15 23</p>
+
+            <p style={{ fontWeight: 600, marginBottom: 6 }}>Formål og retsgrundlag</p>
+            <p style={{ color: "var(--muted)", marginBottom: 12 }}>Indsamling af borgerholdninger til brug i kommunens budgetproces for Budget 2027. Retsgrundlag: GDPR artikel 6, stk. 1, litra a (dit samtykke).</p>
+
+            <p style={{ fontWeight: 600, marginBottom: 6 }}>Hvilke data indsamles?</p>
+            <p style={{ color: "var(--muted)", marginBottom: 12 }}>Email, krypteret adgangskode, besvarelser (tekst/lyd), frivillig metadata (aldersgruppe, by/område).</p>
+
+            <p style={{ fontWeight: 600, marginBottom: 6 }}>AI-behandling</p>
+            <p style={{ color: "var(--muted)", marginBottom: 12 }}>Dine svar bruges til at generere opfølgningsspørgsmål via en lokal AI-model. AI'en kører på kommunens egen server — ingen data sendes til eksterne tjenester. AI'en træffer ingen beslutninger der påvirker dig.</p>
+
+            <p style={{ fontWeight: 600, marginBottom: 6 }}>Modtagere og opbevaring</p>
+            <p style={{ color: "var(--muted)", marginBottom: 12 }}>Kun projektmedarbejdere i Norddjurs Kommune. Anonymiserede resultater præsenteres for politikere. Data slettes senest februar 2027.</p>
+
+            <p style={{ fontWeight: 600, marginBottom: 6 }}>Dine rettigheder</p>
+            <p style={{ color: "var(--muted)", marginBottom: 12 }}>Indsigt (art. 15), berigtigelse (art. 16), sletning (art. 17), begrænsning (art. 18), dataportabilitet (art. 20), indsigelse (art. 21). Du kan til enhver tid trække dit samtykke tilbage via din profil — alle dine data slettes permanent.</p>
+
+            <p style={{ fontWeight: 600, marginBottom: 6 }}>Klageadgang</p>
+            <p style={{ color: "var(--muted)" }}>Du kan klage til Datatilsynet på <span style={{ color: "var(--primary)" }}>datatilsynet.dk</span>.</p>
+          </div>
+        )}
+        {consentExpanded && <div style={{ height: 8 }} />}
+
+        <button
+          onClick={() => { prevStep.current = 4; setStep(9); }}
+          style={{ background: "none", border: "none", color: "var(--primary)", fontSize: 14, cursor: "pointer", textAlign: "left", padding: "8px 0", fontFamily: "DM Sans", textDecoration: "underline", marginBottom: 16 }}
+        >
+          Læs den fulde privatlivspolitik
+        </button>
+
+        {/* Checkbox */}
+        <label style={{ display: "flex", alignItems: "flex-start", gap: 14, cursor: "pointer", marginBottom: 24, padding: 16, background: consent ? "var(--primary-pale)" : "var(--card)", borderRadius: 14, border: `2px solid ${consent ? "var(--primary)" : "var(--border)"}`, transition: "all 0.2s" }}>
           <div onClick={() => setConsent(!consent)} style={{ width: 28, height: 28, borderRadius: 8, border: `2px solid ${consent ? "var(--primary)" : "var(--border)"}`, background: consent ? "var(--primary)" : "#fff", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 2, transition: "all 0.2s" }}>
             {consent && <Icon name="check" size={16} color="#fff" />}
           </div>
-          <span onClick={() => setConsent(!consent)} style={{ fontSize: 15, lineHeight: 1.5 }}>Jeg giver samtykke til, at mine svar bruges i forbindelse med Norddjurs Kommunes budgetproces.</span>
+          <span onClick={() => setConsent(!consent)} style={{ fontSize: 15, lineHeight: 1.5 }}>Jeg har læst og forstået, hvad mine data bruges til, og giver samtykke til behandlingen.</span>
         </label>
         <button onClick={handleConsent} disabled={!consent || loading} style={{ ...bp, opacity: consent && !loading ? 1 : 0.4, cursor: consent && !loading ? "pointer" : "not-allowed" }}>
           {loading ? "Gemmer..." : "Giv samtykke og fortsæt"}
@@ -969,6 +1050,130 @@ const CitizenFlow = ({ onAdminClick }) => {
     </div>
   );
 
+  // ── Step 9: Privatlivspolitik (opgave 12) ──
+  if (step === 9) return (
+    <div style={cs} className="fade-in">
+      <TopBar onBack={() => setStep(prevStep.current || 4)} backLabel="Tilbage" />
+      <div style={{ flex: 1 }}>
+        <h2 style={{ fontSize: 22, fontWeight: 700, marginBottom: 20 }}>Privatlivspolitik</h2>
+        {!privacyPolicyText ? (
+          <div style={{ textAlign: "center", padding: 40, color: "var(--muted)" }}>
+            <div className="spin" style={{ width: 32, height: 32, border: "2px solid var(--border)", borderTop: "2px solid var(--primary)", borderRadius: "50%", margin: "0 auto 16px" }} />
+            Indlæser...
+          </div>
+        ) : (
+          <div>
+            {privacyPolicyText.split("\n").map((line, i) => {
+              if (line.startsWith("# ")) return <h1 key={i} style={{ fontSize: 20, fontWeight: 700, marginBottom: 12, marginTop: i > 0 ? 20 : 0 }}>{line.slice(2)}</h1>;
+              if (line.startsWith("## ")) return <h2 key={i} style={{ fontSize: 16, fontWeight: 700, marginBottom: 8, marginTop: 20, color: "var(--primary)" }}>{line.slice(3)}</h2>;
+              if (line.startsWith("**") && line.endsWith("**")) return <p key={i} style={{ fontSize: 13, fontWeight: 600, color: "var(--muted)", marginBottom: 4 }}>{line.slice(2, -2)}</p>;
+              if (line.startsWith("- **")) {
+                const match = line.match(/^- \*\*(.+?)\*\*(.*)$/);
+                if (match) return <p key={i} style={{ fontSize: 13, lineHeight: 1.6, marginBottom: 4, paddingLeft: 12 }}>• <strong>{match[1]}</strong>{match[2]}</p>;
+              }
+              if (line.startsWith("- ")) return <p key={i} style={{ fontSize: 13, lineHeight: 1.6, marginBottom: 4, paddingLeft: 12 }}>• {line.slice(2)}</p>;
+              if (line === "---") return <hr key={i} style={{ border: "none", borderTop: "1px solid var(--border)", margin: "16px 0" }} />;
+              if (line.trim() === "") return <div key={i} style={{ height: 8 }} />;
+              return <p key={i} style={{ fontSize: 13, lineHeight: 1.7, marginBottom: 6, color: "var(--fg)" }}>{line}</p>;
+            })}
+            <div style={{ marginTop: 28, padding: 16, background: "var(--primary-pale)", borderRadius: 12, border: "1px solid var(--primary)" }}>
+              <p style={{ fontSize: 13, fontWeight: 600, color: "var(--primary)", marginBottom: 4 }}>Klageadgang</p>
+              <p style={{ fontSize: 13, color: "var(--fg)", lineHeight: 1.6 }}>
+                Du kan klage til Datatilsynet på{" "}
+                <a href="https://datatilsynet.dk" target="_blank" rel="noopener noreferrer" style={{ color: "var(--primary)", fontWeight: 600 }}>datatilsynet.dk</a>
+              </p>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  // ── Step 10: Tvungen kodeordsskift (efter admin-nulstilling) ──
+  if (step === 10) return (
+    <div style={cs} className="fade-in">
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center" }}>
+        <div style={{ width: 56, height: 56, borderRadius: "50%", background: "#FEF9EE", border: "2px solid #F0C060", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 20 }}>
+          <span style={{ fontSize: 24 }}>🔑</span>
+        </div>
+        <h2 style={{ fontSize: 24, fontWeight: 700, marginBottom: 8 }}>Skift adgangskode</h2>
+        <p style={{ fontSize: 15, color: "var(--muted)", lineHeight: 1.6, marginBottom: 24 }}>
+          Din adgangskode er blevet nulstillet af en administrator. Du skal oprette en ny adgangskode for at fortsætte.
+        </p>
+        <div style={{ background: "var(--card)", borderRadius: 16, padding: 20, border: "1px solid var(--border)", marginBottom: 24 }}>
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ display: "block", fontSize: 13, fontWeight: 600, marginBottom: 6 }}>Ny adgangskode</label>
+            <input
+              type="password"
+              value={newPassword}
+              onChange={e => { setNewPassword(e.target.value); setChangePasswordError(""); }}
+              placeholder="Min. 8 tegn, stort + lille bogstav + tal"
+              style={{ width: "100%", padding: "14px 16px", borderRadius: 12, border: "2px solid var(--border)", fontSize: 16, outline: "none", boxSizing: "border-box" }}
+              onFocus={e => e.target.style.borderColor = "var(--primary)"}
+              onBlur={e => e.target.style.borderColor = "var(--border)"}
+            />
+          </div>
+          <div>
+            <label style={{ display: "block", fontSize: 13, fontWeight: 600, marginBottom: 6 }}>Bekræft ny adgangskode</label>
+            <input
+              type="password"
+              value={confirmPassword}
+              onChange={e => { setConfirmPassword(e.target.value); setChangePasswordError(""); }}
+              placeholder="Gentag adgangskoden"
+              style={{ width: "100%", padding: "14px 16px", borderRadius: 12, border: "2px solid var(--border)", fontSize: 16, outline: "none", boxSizing: "border-box" }}
+              onFocus={e => e.target.style.borderColor = "var(--primary)"}
+              onBlur={e => e.target.style.borderColor = "var(--border)"}
+            />
+          </div>
+          {changePasswordError && (
+            <p style={{ color: "var(--danger)", fontSize: 13, marginTop: 10 }}>{changePasswordError}</p>
+          )}
+        </div>
+        <button
+          onClick={async () => {
+            if (!newPassword || !confirmPassword) { setChangePasswordError("Udfyld begge felter"); return; }
+            if (newPassword !== confirmPassword) { setChangePasswordError("Adgangskoderne er ikke ens"); return; }
+            setLoading(true);
+            try {
+              const res = await apiFetch("/api/citizen/change-password", {
+                method: "PUT",
+                body: JSON.stringify({ new_password: newPassword, confirm_password: confirmPassword }),
+              }, citizenToken);
+              if (!res.ok) {
+                const err = await res.json();
+                setChangePasswordError(err.detail || "Skift mislykkedes");
+                return;
+              }
+              // Adgangskode skiftet — nulstil og fortsæt normalt
+              setNewPassword("");
+              setConfirmPassword("");
+              setChangePasswordError("");
+              const updatedCitizen = { ...citizen, must_change_password: false };
+              setCitizen(updatedCitizen);
+              localStorage.setItem("citizen", JSON.stringify(updatedCitizen));
+              const hasValidConsent = updatedCitizen.consent_given &&
+                (updatedCitizen.consent_version || 1) >= CURRENT_CONSENT_VERSION;
+              if (hasValidConsent) {
+                setConsent(true);
+                await submitAndFollowup(citizenToken, updatedCitizen, pendingAnswer);
+              } else {
+                setStep(4);
+              }
+            } catch {
+              setChangePasswordError("Kunne ikke forbinde til serveren");
+            } finally {
+              setLoading(false);
+            }
+          }}
+          disabled={loading}
+          style={{ ...bp, opacity: loading ? 0.6 : 1 }}
+        >
+          {loading ? "Gemmer..." : "Gem ny adgangskode og fortsæt"}
+        </button>
+      </div>
+    </div>
+  );
+
   // ── Step 8: Profile ──
   if (step === 8 && citizen) {
     const mainResponses = myResponses.filter(r => !r.is_followup);
@@ -1045,6 +1250,75 @@ const CitizenFlow = ({ onAdminClick }) => {
           )}
         </div>
 
+        {/* Opgave 13a: Download mine data */}
+        <div style={{ background: "var(--card)", borderRadius: 16, padding: 20, border: "1px solid var(--border)", marginBottom: 16 }}>
+          <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 6 }}>Download mine data</h3>
+          <p style={{ fontSize: 14, color: "var(--muted)", lineHeight: 1.6, marginBottom: 12 }}>Download alle dine besvarelser og oplysninger som en JSON-fil (GDPR artikel 20 — dataportabilitet).</p>
+          <button
+            onClick={async () => {
+              const res = await apiFetch("/api/citizen/export", {}, citizenToken);
+              if (res.ok) {
+                const data = await res.json();
+                const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = "mine-data-norddjurs.json";
+                a.click();
+                URL.revokeObjectURL(url);
+              }
+            }}
+            style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 20px", borderRadius: 10, border: "1px solid var(--primary)", background: "var(--primary-pale)", color: "var(--primary)", cursor: "pointer", fontFamily: "DM Sans", fontSize: 14, fontWeight: 600 }}
+          >
+            <Icon name="download" size={18} color="var(--primary)" /> Download mine data (JSON)
+          </button>
+        </div>
+
+        {/* Opgave 13b: Frys mine data */}
+        <div style={{ background: "var(--card)", borderRadius: 16, padding: 20, border: "1px solid var(--border)", marginBottom: 16 }}>
+          <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 6 }}>
+            {citizenFrozen ? "Dine data er frosset" : "Frys mine data"}
+          </h3>
+          <p style={{ fontSize: 14, color: "var(--muted)", lineHeight: 1.6, marginBottom: 12 }}>
+            {citizenFrozen
+              ? "Dine besvarelser indgår ikke i analyser eller AI-opfølgninger, mens dine data er frosset. Du kan til enhver tid ophæve frysningen."
+              : "Dine besvarelser bevares, men ekskluderes fra dashboard, analyse og AI-perspektiver (GDPR artikel 18 — ret til begrænsning)."}
+          </p>
+          <button
+            onClick={async () => {
+              const res = await apiFetch("/api/citizen/freeze", { method: "PUT" }, citizenToken);
+              if (res.ok) {
+                const data = await res.json();
+                setCitizenFrozen(data.frozen);
+              }
+            }}
+            style={{ padding: "12px 20px", borderRadius: 10, border: `1px solid ${citizenFrozen ? "var(--success)" : "var(--muted)"}`, background: citizenFrozen ? "#F0FFF4" : "var(--bg)", color: citizenFrozen ? "var(--success)" : "var(--muted)", cursor: "pointer", fontFamily: "DM Sans", fontSize: 14, fontWeight: 600 }}
+          >
+            {citizenFrozen ? "✓ Fjern frys" : "Frys mine data"}
+          </button>
+        </div>
+
+        {/* Opgave 13c + 12: Links */}
+        <div style={{ background: "var(--card)", borderRadius: 16, padding: 20, border: "1px solid var(--border)", marginBottom: 16 }}>
+          <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 12 }}>Dine rettigheder</h3>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <button
+              onClick={() => { prevStep.current = 8; setStep(9); }}
+              style={{ display: "flex", alignItems: "center", gap: 8, background: "none", border: "none", color: "var(--primary)", fontSize: 14, cursor: "pointer", fontFamily: "DM Sans", fontWeight: 500, textAlign: "left", padding: 0 }}
+            >
+              📋 Læs privatlivspolitikken
+            </button>
+            <a
+              href="https://datatilsynet.dk"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--primary)", fontSize: 14, fontFamily: "DM Sans", fontWeight: 500, textDecoration: "none" }}
+            >
+              🏛️ Klage til Datatilsynet (datatilsynet.dk)
+            </a>
+          </div>
+        </div>
+
         {/* GDPR Delete */}
         <div style={{ background: "#FEF2F2", borderRadius: 16, padding: 20, border: "1px solid #FECACA", marginBottom: 20 }}>
           <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 8, color: "var(--danger)" }}>Træk samtykke tilbage</h3>
@@ -1091,6 +1365,10 @@ const AdminPanel = ({ adminToken, onLogout }) => {
   const [newRule, setNewRule] = useState({ rule_type: "word", pattern: "", description: "" });
   const [newTheme, setNewTheme] = useState({ name: "", icon: "📋" });
   const [deletingThemeId, setDeletingThemeId] = useState(null);
+  const [consentOverview, setConsentOverview] = useState(null);
+  const [citizenSearch, setCitizenSearch] = useState("");
+  const [citizenResults, setCitizenResults] = useState([]);
+  const [resetResult, setResetResult] = useState(null); // { email, temp_password, expires_at }
 
   const adminFetch = (path, options = {}) => apiFetch(path, options, adminToken);
 
@@ -1134,11 +1412,21 @@ const AdminPanel = ({ adminToken, onLogout }) => {
       .then(setModerationRules);
   }, [tab]);
 
+  // Opgave 14c: Load samtykke-oversigt
+  useEffect(() => {
+    if (tab !== "consent") return;
+    adminFetch("/api/admin/consent-overview")
+      .then(r => r.ok ? r.json() : null)
+      .then(setConsentOverview);
+  }, [tab]);
+
   const tabs = [
     { id: "dashboard", label: "Dashboard", icon: "chart" },
     { id: "questions", label: "Spørgsmål", icon: "questions" },
     { id: "responses", label: "Besvarelser", icon: "list" },
     { id: "moderation", label: "Moderation", icon: "settings" },
+    { id: "consent", label: "Samtykker", icon: "check" },
+    { id: "citizens", label: "Borgere", icon: "questions" },
     { id: "settings", label: "AI-indstillinger", icon: "settings" },
   ];
 
@@ -1614,6 +1902,170 @@ const AdminPanel = ({ adminToken, onLogout }) => {
                 Vis flaggede besvarelser
               </button>
             </div>
+          </div>
+        )}
+
+        {/* ── Consent Tab (opgave 14c) ── */}
+        {tab === "consent" && (
+          <div className="fade-in">
+            <h1 style={{ fontSize: 28, fontWeight: 700, marginBottom: 24 }}>Samtykke-oversigt</h1>
+            {!consentOverview ? (
+              <div style={{ textAlign: "center", padding: 40, color: "var(--muted)" }}>Indlæser...</div>
+            ) : (
+              <>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 16, marginBottom: 28 }}>
+                  {[
+                    { label: "Borgere i alt", value: consentOverview.total_citizens, color: "var(--primary)" },
+                    { label: "Aktivt samtykke", value: consentOverview.consent_given, color: "var(--success)" },
+                    { label: "Trukket tilbage", value: consentOverview.consent_withdrawn, color: "var(--danger)" },
+                    { label: "Frosne konti", value: consentOverview.frozen_count, color: "var(--accent)" },
+                  ].map(s => (
+                    <div key={s.label} style={{ background: "var(--card)", borderRadius: 14, padding: 18, border: "1px solid var(--border)", textAlign: "center" }}>
+                      <div style={{ fontSize: 32, fontWeight: 700, color: s.color }}>{s.value}</div>
+                      <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 4 }}>{s.label}</div>
+                    </div>
+                  ))}
+                </div>
+
+                <div style={{ ...cardStyle, marginBottom: 24 }}>
+                  <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 14 }}>Aktive samtykker pr. version</h3>
+                  <p style={{ fontSize: 13, color: "var(--muted)", marginBottom: 12 }}>Aktuel samtykke-version: <strong>v{consentOverview.current_consent_version}</strong></p>
+                  {consentOverview.by_version.length === 0 ? (
+                    <p style={{ fontSize: 14, color: "var(--muted)" }}>Ingen aktive samtykker endnu.</p>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      {consentOverview.by_version.map(v => (
+                        <div key={v.version} style={{ display: "flex", justifyContent: "space-between", padding: "10px 14px", background: v.version < consentOverview.current_consent_version ? "#FEF9EE" : "var(--primary-pale)", borderRadius: 8, border: `1px solid ${v.version < consentOverview.current_consent_version ? "#F0C060" : "var(--primary)"}` }}>
+                          <span style={{ fontSize: 14 }}>Version {v.version} {v.version < consentOverview.current_consent_version ? "⚠️ (forældet)" : "✓ (aktuel)"}</span>
+                          <strong style={{ fontSize: 14 }}>{v.count} borgere</strong>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div style={cardStyle}>
+                  <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 14 }}>Seneste samtykke-hændelser</h3>
+                  {consentOverview.recent_logs.length === 0 ? (
+                    <p style={{ fontSize: 14, color: "var(--muted)" }}>Ingen hændelser endnu.</p>
+                  ) : (
+                    <div style={{ overflowX: "auto" }}>
+                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                        <thead>
+                          <tr style={{ borderBottom: "2px solid var(--border)" }}>
+                            {["Handling", "Version", "Tidspunkt", "IP"].map(h => (
+                              <th key={h} style={{ textAlign: "left", padding: "8px 10px", color: "var(--muted)", fontWeight: 600 }}>{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {consentOverview.recent_logs.map((l, i) => (
+                            <tr key={i} style={{ borderBottom: "1px solid var(--border)" }}>
+                              <td style={{ padding: "8px 10px", color: l.consent_given ? "var(--success)" : "var(--danger)", fontWeight: 500 }}>
+                                {l.consent_given ? "✓ Givet" : "✗ Trukket tilbage"}
+                              </td>
+                              <td style={{ padding: "8px 10px" }}>v{l.consent_version}</td>
+                              <td style={{ padding: "8px 10px", color: "var(--muted)" }}>{fmt(l.created_at)}</td>
+                              <td style={{ padding: "8px 10px", color: "var(--muted)", fontSize: 12 }}>{l.ip_address || "—"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* ── Citizens Tab (borgerstyring + kode-nulstilling) ── */}
+        {tab === "citizens" && (
+          <div className="fade-in">
+            <h1 style={{ fontSize: 28, fontWeight: 700, marginBottom: 8 }}>Borgere</h1>
+            <p style={{ fontSize: 14, color: "var(--muted)", marginBottom: 24 }}>Søg efter borgere og nulstil adgangskoder.</p>
+
+            {/* Søgefelt */}
+            <div style={{ ...cardStyle, marginBottom: 24 }}>
+              <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 14 }}>Søg efter borger</h3>
+              <div style={{ display: "flex", gap: 10 }}>
+                <input
+                  type="text"
+                  value={citizenSearch}
+                  onChange={e => setCitizenSearch(e.target.value)}
+                  onKeyDown={e => e.key === "Enter" && adminFetch(`/api/admin/citizens?q=${encodeURIComponent(citizenSearch)}`).then(r => r.ok ? r.json() : []).then(setCitizenResults)}
+                  placeholder="Søg på email..."
+                  style={{ flex: 1, padding: "12px 16px", borderRadius: 10, border: "1px solid var(--border)", fontSize: 15, outline: "none" }}
+                />
+                <button
+                  onClick={() => adminFetch(`/api/admin/citizens?q=${encodeURIComponent(citizenSearch)}`).then(r => r.ok ? r.json() : []).then(d => { setCitizenResults(d); setResetResult(null); })}
+                  style={{ padding: "12px 20px", borderRadius: 10, border: "none", background: "var(--primary)", color: "#fff", cursor: "pointer", fontFamily: "DM Sans", fontSize: 14, fontWeight: 600 }}
+                >
+                  Søg
+                </button>
+              </div>
+            </div>
+
+            {/* Resultat af nulstilling — vises kun én gang */}
+            {resetResult && (
+              <div style={{ background: "#FFFBEB", border: "2px solid #F0C060", borderRadius: 14, padding: 20, marginBottom: 24 }}>
+                <p style={{ fontWeight: 700, fontSize: 15, marginBottom: 8 }}>⚠️ Midlertidig adgangskode — vis kun til rette person</p>
+                <p style={{ fontSize: 14, color: "var(--muted)", marginBottom: 12 }}>Denne kode vises kun én gang. Giv den videre til borgeren mundtligt eller på papir.</p>
+                <div style={{ display: "flex", alignItems: "center", gap: 12, background: "#fff", borderRadius: 10, padding: "14px 18px", border: "1px solid #F0C060" }}>
+                  <code style={{ fontSize: 22, fontWeight: 700, letterSpacing: 2, flex: 1 }}>{resetResult.temp_password}</code>
+                  <button
+                    onClick={() => navigator.clipboard.writeText(resetResult.temp_password)}
+                    style={{ padding: "8px 14px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--bg)", cursor: "pointer", fontFamily: "DM Sans", fontSize: 13 }}
+                  >
+                    Kopiér
+                  </button>
+                </div>
+                <p style={{ fontSize: 13, color: "var(--muted)", marginTop: 10 }}>
+                  Borger: <strong>{resetResult.citizen_email}</strong> &nbsp;·&nbsp;
+                  Udløber: <strong>{fmt(resetResult.expires_at)}</strong> (24 timer)
+                </p>
+                <button onClick={() => setResetResult(null)} style={{ marginTop: 12, background: "none", border: "none", color: "var(--muted)", fontSize: 13, cursor: "pointer", fontFamily: "DM Sans" }}>
+                  Luk
+                </button>
+              </div>
+            )}
+
+            {/* Søgeresultater */}
+            {citizenResults.length > 0 && (
+              <div style={cardStyle}>
+                <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 14 }}>Resultater ({citizenResults.length})</h3>
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  {citizenResults.map(c => (
+                    <div key={c.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 16px", background: "var(--bg)", borderRadius: 10, flexWrap: "wrap", gap: 10 }}>
+                      <div>
+                        <div style={{ fontSize: 15, fontWeight: 600 }}>{c.email}</div>
+                        <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2, display: "flex", gap: 12 }}>
+                          <span>Oprettet: {fmt(c.created_at)}</span>
+                          <span>Svar: {c.response_count}</span>
+                          {c.must_change_password && <span style={{ color: "#D97706", fontWeight: 600 }}>⚠️ Afventer kodeordsskift</span>}
+                          {c.frozen && <span style={{ color: "var(--accent)", fontWeight: 600 }}>❄️ Fryst</span>}
+                        </div>
+                      </div>
+                      <button
+                        onClick={async () => {
+                          if (!window.confirm(`Nulstil adgangskode for ${c.email}?`)) return;
+                          const res = await adminFetch(`/api/admin/citizens/${c.id}/reset-password`, { method: "POST" });
+                          if (res.ok) {
+                            const data = await res.json();
+                            setResetResult(data);
+                            // Opdatér listen så status vises
+                            setCitizenResults(prev => prev.map(x => x.id === c.id ? { ...x, must_change_password: true } : x));
+                          }
+                        }}
+                        style={{ padding: "10px 16px", borderRadius: 10, border: "1px solid #D97706", background: "#FFFBEB", color: "#92400E", cursor: "pointer", fontFamily: "DM Sans", fontSize: 13, fontWeight: 600, flexShrink: 0 }}
+                      >
+                        Nulstil adgangskode
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
 

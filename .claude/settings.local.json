@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx vite:*)",
+      "Bash(python -m py_compile main.py models.py)",
+      "Bash(python -m py_compile database.py main.py)",
+      "Bash(python -m py_compile main.py models.py database.py)"
+    ]
+  }
+}

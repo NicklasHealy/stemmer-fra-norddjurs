@@ -56,3 +56,5 @@ backend/models/
 CLAUDE.md
 *.pdf
 *.code-workspace
+
+*.bat

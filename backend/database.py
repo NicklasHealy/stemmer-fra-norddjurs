@@ -1,6 +1,6 @@
 """Database connection og session management."""
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from dotenv import load_dotenv
@@ -39,5 +39,63 @@ def get_db():
 
 
 def init_db():
-    """Create all tables if they don't exist."""
+    """Opret alle tabeller der ikke eksisterer endnu."""
     Base.metadata.create_all(bind=engine)
+
+
+def migrate_db():
+    """Kør database-migrationer for nye kolonner (idempotent — sikker at køre gentagne gange).
+
+    Håndterer:
+    - citizens.consent_version  (opgave 14b)
+    - citizens.frozen            (opgave 13b)
+    - Ny tabel: consent_logs     (opgave 14a) — oprettes via init_db()
+    """
+    # Opret evt. nye tabeller (f.eks. consent_logs) der endnu ikke eksisterer
+    init_db()
+
+    is_sqlite = DATABASE_URL.startswith("sqlite")
+    inspector = inspect(engine)
+
+    try:
+        existing_columns = {col["name"] for col in inspector.get_columns("citizens")}
+    except Exception:
+        # Tabellen eksisterer endnu ikke — init_db() opretter den
+        return
+
+    migrations = []
+
+    if "consent_version" not in existing_columns:
+        if is_sqlite:
+            migrations.append("ALTER TABLE citizens ADD COLUMN consent_version INTEGER NOT NULL DEFAULT 1")
+        else:
+            # SQL Server
+            migrations.append("ALTER TABLE citizens ADD consent_version INT NOT NULL DEFAULT 1")
+
+    if "frozen" not in existing_columns:
+        if is_sqlite:
+            migrations.append("ALTER TABLE citizens ADD COLUMN frozen BOOLEAN NOT NULL DEFAULT 0")
+        else:
+            migrations.append("ALTER TABLE citizens ADD frozen BIT NOT NULL DEFAULT 0")
+
+    if "must_change_password" not in existing_columns:
+        if is_sqlite:
+            migrations.append("ALTER TABLE citizens ADD COLUMN must_change_password BOOLEAN NOT NULL DEFAULT 0")
+        else:
+            migrations.append("ALTER TABLE citizens ADD must_change_password BIT NOT NULL DEFAULT 0")
+
+    if "temp_password_expires" not in existing_columns:
+        if is_sqlite:
+            migrations.append("ALTER TABLE citizens ADD COLUMN temp_password_expires DATETIME NULL")
+        else:
+            migrations.append("ALTER TABLE citizens ADD temp_password_expires DATETIME NULL")
+
+    if migrations:
+        with engine.connect() as conn:
+            for sql in migrations:
+                print(f"Migration: {sql}")
+                conn.execute(text(sql))
+            conn.commit()
+        print(f"Migration fuldført: {len(migrations)} kolonne(r) tilføjet.")
+    else:
+        print("Migration: ingen ændringer nødvendige.")

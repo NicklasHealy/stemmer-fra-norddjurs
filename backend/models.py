@@ -53,10 +53,15 @@ class Citizen(Base):
     password_hash = Column(String(200), nullable=False)
     consent_given = Column(Boolean, default=False)
     consent_given_at = Column(DateTime, nullable=True)
+    consent_version = Column(Integer, default=1, nullable=False)       # opgave 14b
+    frozen = Column(Boolean, default=False, nullable=False)             # opgave 13b
+    must_change_password = Column(Boolean, default=False, nullable=False)  # tvungen kodeordsskift
+    temp_password_expires = Column(DateTime, nullable=True)             # udløbstid for midlertidig kode
     created_at = Column(DateTime, default=datetime.utcnow)
 
     responses = relationship("Response", back_populates="citizen", cascade="all, delete-orphan")
     citizen_metadata = relationship("ResponseMetadata", back_populates="citizen", cascade="all, delete-orphan", uselist=False)
+    consent_logs = relationship("ConsentLog", back_populates="citizen", cascade="all, delete-orphan")
 
 
 class Response(Base):
@@ -149,3 +154,31 @@ class ModerationRule(Base):
     description = Column(String(300), nullable=True)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+# Opgave 14a: Log over samtykker
+class ConsentLog(Base):
+    __tablename__ = "consent_logs"
+
+    id = Column(String, primary_key=True, default=new_uuid)
+    citizen_id = Column(String, ForeignKey("citizens.id", ondelete="CASCADE"), nullable=False)
+    consent_given = Column(Boolean, nullable=False)
+    consent_version = Column(Integer, nullable=False, default=1)
+    ip_address = Column(String(45), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    citizen = relationship("Citizen", back_populates="consent_logs")
+
+
+# Audit-log: admin-nulstillinger af adgangskoder
+class PasswordResetLog(Base):
+    __tablename__ = "password_reset_log"
+
+    id = Column(String, primary_key=True, default=new_uuid)
+    admin_user_id = Column(String, ForeignKey("admin_users.id"), nullable=False)
+    target_citizen_id = Column(String, ForeignKey("citizens.id", ondelete="CASCADE"), nullable=False)
+    reset_at = Column(DateTime, default=datetime.utcnow)
+    temp_password_expires = Column(DateTime, nullable=False)
+
+    admin = relationship("AdminUser")
+    citizen = relationship("Citizen")
