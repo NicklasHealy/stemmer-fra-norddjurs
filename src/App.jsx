@@ -220,7 +220,7 @@ const AudioRecorder = ({ onRecorded }) => {
         {recording ? <Icon name="stop" size={36} color="#fff" /> : <Icon name="mic" size={40} color="#fff" />}
       </button>
       <p style={{ color: recording ? "var(--danger)" : "var(--muted)", fontSize: 15, fontWeight: recording ? 600 : 400 }}>
-        {recording ? `Optager... ${fmtTime(elapsed)} / 0:30` : "Tryk for at optage (max 30 sek)"}
+        {recording ? `Optager... ${fmtTime(elapsed)} / 1:30` : "Tryk for at optage (max 90 sek)"}
       </p>
     </div>
   );
@@ -301,6 +301,13 @@ const CitizenFlow = ({ onAdminClick }) => {
   const [step, setStep] = useState(0);
   const [citizenToken, setCitizenToken] = useState(() => localStorage.getItem("citizenToken"));
   const [citizen, setCitizen] = useState(() => { try { return JSON.parse(localStorage.getItem("citizen")); } catch { return null; } });
+  const [forloeb, setForloeb] = useState([]);
+  const [selectedForloeb, setSelectedForloeb] = useState(null);
+  const [showCitizenQuestionModal, setShowCitizenQuestionModal] = useState(false);
+  const [citizenQuestionText, setCitizenQuestionText] = useState("");
+  const [citizenQuestionAnonymous, setCitizenQuestionAnonymous] = useState(false);
+  const [citizenQuestionSubmitting, setCitizenQuestionSubmitting] = useState(false);
+  const [citizenQuestionSuccess, setCitizenQuestionSuccess] = useState(false);
   const [themes, setThemes] = useState([]);
   const [areas, setAreas] = useState([]);
   const [themeQuestions, setThemeQuestions] = useState([]);
@@ -350,8 +357,15 @@ const CitizenFlow = ({ onAdminClick }) => {
     }
   }, [citizenToken, citizen]);
 
-  // Load themes and areas on mount
+  // Load forloeb, themes og areas on mount
   useEffect(() => {
+    fetch(`${API_BASE}/api/forloeb`)
+      .then(r => r.ok ? r.json() : [])
+      .then(data => {
+        setForloeb(data);
+        if (data.length === 1) setSelectedForloeb(data[0]);
+      })
+      .catch(() => {});
     fetch(`${API_BASE}/api/themes`)
       .then(r => r.ok ? r.json() : [])
       .then(setThemes)
@@ -445,6 +459,7 @@ const CitizenFlow = ({ onAdminClick }) => {
     }
     setLoading(false);
     setPendingAnswer(null);
+    loadMyResponses();  // opgave 15: opdatér besvarelser efter indsendelse
     if (hasFollowup) {
       setStep(5);
     } else {
@@ -462,7 +477,7 @@ const CitizenFlow = ({ onAdminClick }) => {
       audioBlob: audioBlob,
       response_type: answerType === "audio" ? "audio" : "text",
       allowFollowup: currentQuestion.allow_followup,
-      themeName: selectedTheme?.name || "",
+      themeName: selectedTheme?.name || selectedForloeb?.title || "",
       questionText: currentQuestion.body || "",
     };
     setPendingAnswer(pending);
@@ -564,6 +579,7 @@ const CitizenFlow = ({ onAdminClick }) => {
     setAuthError("");
     setMyResponses([]);
     setCitizenFrozen(false);
+    if (forloeb.length > 1) setSelectedForloeb(null);
     setStep(0);
   };
 
@@ -647,6 +663,7 @@ const CitizenFlow = ({ onAdminClick }) => {
     } catch (e) {
       console.error("Followup submit error:", e);
     }
+    loadMyResponses();  // opgave 15
     goToNextQuestion();
   };
 
@@ -692,11 +709,21 @@ const CitizenFlow = ({ onAdminClick }) => {
     <div style={{ position: "sticky", top: 0, zIndex: 10, background: "var(--bg)", paddingBottom: 12, marginBottom: 8 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <BackBtn onClick={onBack} label={backLabel} />
-        {citizen ? (
-          <button onClick={() => { prevStep.current = step; setStep(8); }} style={{ background: "none", border: "1px solid var(--border)", borderRadius: 10, padding: "6px 14px", cursor: "pointer", fontFamily: "DM Sans", fontSize: 13, color: "var(--muted)", display: "flex", alignItems: "center", gap: 6 }}>👤 Min profil</button>
-        ) : (
-          <button onClick={() => { prevStep.current = step; setStep(3); }} style={{ background: "var(--primary)", border: "none", borderRadius: 10, padding: "6px 14px", cursor: "pointer", fontFamily: "DM Sans", fontSize: 13, color: "#fff", fontWeight: 500 }}>Log ind</button>
-        )}
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          {selectedForloeb?.allow_citizen_questions && citizenToken && (
+            <button
+              onClick={() => setShowCitizenQuestionModal(true)}
+              style={{ background: "var(--accent-light)", border: "1px solid var(--accent)", borderRadius: 10, padding: "6px 12px", cursor: "pointer", fontFamily: "DM Sans", fontSize: 13, color: "var(--accent)", fontWeight: 500 }}
+            >
+              ➕ Stil spørgsmål
+            </button>
+          )}
+          {citizen ? (
+            <button onClick={() => { prevStep.current = step; setStep(8); }} style={{ background: "none", border: "1px solid var(--border)", borderRadius: 10, padding: "6px 14px", cursor: "pointer", fontFamily: "DM Sans", fontSize: 13, color: "var(--muted)", display: "flex", alignItems: "center", gap: 6 }}>👤 Min profil</button>
+          ) : (
+            <button onClick={() => { prevStep.current = step; setStep(3); }} style={{ background: "var(--primary)", border: "none", borderRadius: 10, padding: "6px 14px", cursor: "pointer", fontFamily: "DM Sans", fontSize: 13, color: "#fff", fontWeight: 500 }}>Log ind</button>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -723,48 +750,118 @@ const CitizenFlow = ({ onAdminClick }) => {
     </div>
   );
 
-  // ── Step 1: Vælg tema ──
-  if (step === 1) return (
-    <div style={cs} className="fade-in">
-      <TopBar onBack={() => setStep(0)} backLabel="Tilbage" />
-      <h2 style={{ fontSize: 24, fontWeight: 700, marginBottom: 8 }}>Vælg et tema</h2>
-      <p style={{ fontSize: 15, color: "var(--muted)", marginBottom: 24, lineHeight: 1.5 }}>Hvad vil du gerne sige noget om?</p>
-      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-        {themes.map(theme => {
-          const qCount = theme.question_count || 0;
-          return (
-            <button key={theme.id} onClick={async () => {
-              if (qCount === 0) return;
-              setSelectedTheme(theme);
-              setQuestionIndex(0);
-              const res = await fetch(`${API_BASE}/api/themes/${theme.id}/questions`);
-              if (res.ok) setThemeQuestions(await res.json());
-              setStep(2);
-            }}
-              style={{ padding: "22px 20px", borderRadius: 16, border: "2px solid var(--border)", background: "var(--card)", cursor: qCount > 0 ? "pointer" : "not-allowed", display: "flex", alignItems: "center", gap: 16, transition: "all 0.2s", textAlign: "left", opacity: qCount > 0 ? 1 : 0.4 }}
-              onMouseEnter={e => { if(qCount > 0) { e.currentTarget.style.borderColor = "var(--primary)"; e.currentTarget.style.background = "var(--primary-pale)"; }}}
-              onMouseLeave={e => { e.currentTarget.style.borderColor = "var(--border)"; e.currentTarget.style.background = "var(--card)"; }}>
-              <span style={{ fontSize: 32 }}>{theme.icon}</span>
-              <div>
-                <div style={{ fontWeight: 600, fontSize: 16, fontFamily: "DM Sans" }}>{theme.name}</div>
-                <div style={{ fontSize: 13, color: "var(--muted)", marginTop: 2, fontFamily: "DM Sans" }}>{qCount} aktive spørgsmål</div>
-              </div>
-            </button>
-          ); 
-        })}
+  // ── Step 1: Vælg forløb (hvis flere) eller vælg tema ──
+  if (step === 1) {
+    // Forløb ikke valgt og der er flere — vis forløb-valg
+    if (!selectedForloeb) {
+      if (forloeb.length === 0) return (
+        <div style={cs} className="fade-in">
+          <TopBar onBack={() => setStep(0)} backLabel="Tilbage" />
+          <p style={{ color: "var(--muted)", marginTop: 60, textAlign: "center", fontSize: 15 }}>Ingen aktive forløb i øjeblikket.</p>
+        </div>
+      );
+      return (
+        <div style={cs} className="fade-in">
+          <TopBar onBack={() => setStep(0)} backLabel="Tilbage" />
+          <h2 style={{ fontSize: 24, fontWeight: 700, marginBottom: 8 }}>Vælg et forløb</h2>
+          <p style={{ fontSize: 15, color: "var(--muted)", marginBottom: 24, lineHeight: 1.5 }}>Hvilket projekt vil du bidrage til?</p>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {forloeb.map(f => (
+              <button key={f.id} onClick={async () => {
+                setSelectedForloeb(f);
+                if (f.mode === "questions") {
+                  const res = await fetch(`${API_BASE}/api/forloeb/${f.id}/questions`);
+                  if (res.ok) setThemeQuestions(await res.json());
+                  setQuestionIndex(0);
+                  setStep(2);
+                }
+                // themes-mode: bliv på step 1, vis temaer nedenfor
+              }}
+                style={{ padding: "22px 20px", borderRadius: 16, border: "2px solid var(--border)", background: "var(--card)", cursor: "pointer", textAlign: "left", transition: "all 0.2s" }}
+                onMouseEnter={e => { e.currentTarget.style.borderColor = "var(--primary)"; e.currentTarget.style.background = "var(--primary-pale)"; }}
+                onMouseLeave={e => { e.currentTarget.style.borderColor = "var(--border)"; e.currentTarget.style.background = "var(--card)"; }}
+              >
+                <div style={{ fontWeight: 700, fontSize: 17, fontFamily: "DM Sans", marginBottom: 6 }}>{f.title}</div>
+                {f.description && <div style={{ fontSize: 14, color: "var(--muted)", lineHeight: 1.5, marginBottom: 8 }}>{f.description}</div>}
+                <div style={{ fontSize: 12, color: "var(--primary)", fontWeight: 500 }}>
+                  {f.mode === "themes"
+                    ? `${(f.themes || []).length} temaer`
+                    : `${f.question_count || 0} spørgsmål`}
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    // Forløb valgt, questions-mode — burde aldrig lande her (skip til step 2)
+    if (selectedForloeb.mode === "questions") {
+      setStep(2);
+      return null;
+    }
+
+    // Forløb valgt, themes-mode — vis temaerne i det valgte forløb
+    const forloebThemes = themes.filter(t => t.forloeb_id === selectedForloeb.id);
+    const backFromThemes = () => {
+      if (forloeb.length > 1) { setSelectedForloeb(null); }
+      else { setStep(0); }
+    };
+    return (
+      <div style={cs} className="fade-in">
+        <TopBar onBack={backFromThemes} backLabel={forloeb.length > 1 ? "Skift forløb" : "Tilbage"} />
+        <div style={{ background: "var(--primary-pale)", borderRadius: 12, padding: "8px 14px", display: "inline-flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
+          <span style={{ fontSize: 13, fontWeight: 600, color: "var(--primary)" }}>📋 {selectedForloeb.title}</span>
+        </div>
+        <h2 style={{ fontSize: 24, fontWeight: 700, marginBottom: 8 }}>Vælg et tema</h2>
+        <p style={{ fontSize: 15, color: "var(--muted)", marginBottom: 24, lineHeight: 1.5 }}>Hvad vil du gerne sige noget om?</p>
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {forloebThemes.map(theme => {
+            const qCount = theme.question_count || 0;
+            return (
+              <button key={theme.id} onClick={async () => {
+                if (qCount === 0) return;
+                setSelectedTheme(theme);
+                setQuestionIndex(0);
+                const res = await fetch(`${API_BASE}/api/themes/${theme.id}/questions`);
+                if (res.ok) setThemeQuestions(await res.json());
+                setStep(2);
+              }}
+                style={{ padding: "22px 20px", borderRadius: 16, border: "2px solid var(--border)", background: "var(--card)", cursor: qCount > 0 ? "pointer" : "not-allowed", display: "flex", alignItems: "center", gap: 16, transition: "all 0.2s", textAlign: "left", opacity: qCount > 0 ? 1 : 0.4 }}
+                onMouseEnter={e => { if (qCount > 0) { e.currentTarget.style.borderColor = "var(--primary)"; e.currentTarget.style.background = "var(--primary-pale)"; } }}
+                onMouseLeave={e => { e.currentTarget.style.borderColor = "var(--border)"; e.currentTarget.style.background = "var(--card)"; }}>
+                <span style={{ fontSize: 32 }}>{theme.icon}</span>
+                <div>
+                  <div style={{ fontWeight: 600, fontSize: 16, fontFamily: "DM Sans" }}>{theme.name}</div>
+                  <div style={{ fontSize: 13, color: "var(--muted)", marginTop: 2, fontFamily: "DM Sans" }}>{qCount} aktive spørgsmål</div>
+                </div>
+              </button>
+            );
+          })}
+        </div>
       </div>
-    </div>
-  );
+    );
+  }
 
   // ── Step 2: Spørgsmål ──
   if (step === 2 && currentQuestion) {
     const alreadyAnswered = citizen && answeredQuestionIds.has(currentQuestion.id);
+    const isQuestionsMode = selectedForloeb?.mode === "questions";
+    const backFromQuestion = () => {
+      setStep(1);
+      if (!isQuestionsMode) { setSelectedTheme(null); setThemeQuestions([]); }
+      setAnswer(""); setAudioBlob(null);
+    };
     return (
       <div style={cs} className="fade-in">
-        <TopBar onBack={() => { setStep(1); setSelectedTheme(null); setThemeQuestions([]); setAnswer(""); setAudioBlob(null); }} backLabel="Skift tema" />
+        <TopBar onBack={backFromQuestion} backLabel={isQuestionsMode ? "Tilbage" : "Skift tema"} />
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
           <div style={{ background: "var(--primary-pale)", borderRadius: 12, padding: "8px 14px", display: "inline-flex", alignItems: "center", gap: 8 }}>
-            <span>{selectedTheme.icon}</span><span style={{ fontSize: 13, fontWeight: 500, color: "var(--primary)" }}>{selectedTheme.name}</span>
+            {selectedTheme ? (
+              <><span>{selectedTheme.icon}</span><span style={{ fontSize: 13, fontWeight: 500, color: "var(--primary)" }}>{selectedTheme.name}</span></>
+            ) : (
+              <span style={{ fontSize: 13, fontWeight: 500, color: "var(--primary)" }}>📋 {selectedForloeb?.title}</span>
+            )}
           </div>
           <span style={{ fontSize: 13, fontWeight: 500, color: "var(--muted)" }}>Spørgsmål {questionIndex + 1} af {themeQuestions.length}</span>
         </div>
@@ -1044,7 +1141,22 @@ const CitizenFlow = ({ onAdminClick }) => {
           <p style={{ fontSize: 15, fontWeight: 600, color: "var(--accent)", marginBottom: 4 }}>📅 Borgermøde</p>
           <p style={{ fontSize: 15, lineHeight: 1.5 }}>19. august 2026 — kom og hør, hvad borgerne i Norddjurs mener. Alle er velkomne!</p>
         </div>
-        <button onClick={() => { setStep(1); setSelectedTheme(null); setThemeQuestions([]); setQuestionIndex(0); setAnswer(""); setAudioBlob(null); setFollowupQ(""); setFollowupAnswer(""); setFollowupAudioBlob(null); setInputMode("text"); setFollowupInputMode("text"); sessionId.current = uid(); startTime.current = Date.now(); }} style={bs}>Besvar et nyt tema</button>
+        <button onClick={() => {
+          setStep(1);
+          setSelectedTheme(null);
+          setThemeQuestions([]);
+          setQuestionIndex(0);
+          setAnswer("");
+          setAudioBlob(null);
+          setFollowupQ("");
+          setFollowupAnswer("");
+          setFollowupAudioBlob(null);
+          setInputMode("text");
+          setFollowupInputMode("text");
+          sessionId.current = uid();
+          startTime.current = Date.now();
+          if (forloeb.length > 1) setSelectedForloeb(null);
+        }} style={bs}>Besvar {selectedForloeb?.mode === "questions" ? "et andet forløb" : "et nyt tema"}</button>
         <button onClick={() => { prevStep.current = 7; setStep(8); }} style={{ marginTop: 12, background: "none", border: "none", color: "var(--primary)", fontSize: 15, cursor: "pointer", fontFamily: "DM Sans", fontWeight: 500 }}>👤 Gå til min profil</button>
       </div>
     </div>
@@ -1339,6 +1451,78 @@ const CitizenFlow = ({ onAdminClick }) => {
     );
   }
 
+  // ── Modal: Stil et borgerspørgsmål ──
+  if (showCitizenQuestionModal) return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 100, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
+      <div className="fade-in" style={{ background: "var(--bg)", borderRadius: "20px 20px 0 0", padding: 28, width: "100%", maxWidth: 480, maxHeight: "85vh", overflowY: "auto" }}>
+        {citizenQuestionSuccess ? (
+          <div style={{ textAlign: "center", padding: "20px 0" }}>
+            <div style={{ width: 64, height: 64, borderRadius: "50%", background: "var(--primary-pale)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
+              <Icon name="check" size={32} color="var(--primary)" />
+            </div>
+            <h3 style={{ fontSize: 20, fontWeight: 700, marginBottom: 8 }}>Tak for dit spørgsmål!</h3>
+            <p style={{ fontSize: 14, color: "var(--muted)", lineHeight: 1.6, marginBottom: 24 }}>
+              {selectedForloeb?.citizen_question_requires_approval
+                ? "Dit spørgsmål er modtaget og vil blive gennemgået, inden det vises til andre."
+                : "Dit spørgsmål er nu tilføjet til forløbet og kan besvares af andre borgere."}
+            </p>
+            <button onClick={() => { setShowCitizenQuestionModal(false); setCitizenQuestionSuccess(false); setCitizenQuestionText(""); setCitizenQuestionAnonymous(false); }} style={bp}>Luk</button>
+          </div>
+        ) : (
+          <>
+            <h3 style={{ fontSize: 20, fontWeight: 700, marginBottom: 8 }}>Stil et spørgsmål</h3>
+            <p style={{ fontSize: 14, color: "var(--muted)", lineHeight: 1.5, marginBottom: 16 }}>
+              Er der et spørgsmål, du gerne vil have andre borgere til at tage stilling til?
+            </p>
+            <textarea
+              value={citizenQuestionText}
+              onChange={e => setCitizenQuestionText(e.target.value)}
+              placeholder="Skriv dit spørgsmål her..."
+              maxLength={500}
+              style={{ width: "100%", minHeight: 100, padding: 16, borderRadius: 14, border: "2px solid var(--border)", background: "var(--card)", resize: "vertical", fontSize: 16, lineHeight: 1.6, outline: "none", marginBottom: 6, boxSizing: "border-box" }}
+              onFocus={e => e.target.style.borderColor = "var(--primary)"}
+              onBlur={e => e.target.style.borderColor = "var(--border)"}
+            />
+            <p style={{ fontSize: 13, color: "var(--muted)", marginBottom: 16 }}>{citizenQuestionText.length}/500 tegn</p>
+            <label style={{ display: "flex", alignItems: "center", gap: 12, cursor: "pointer", marginBottom: 24 }}>
+              <div
+                onClick={() => setCitizenQuestionAnonymous(!citizenQuestionAnonymous)}
+                style={{ width: 26, height: 26, borderRadius: 7, border: `2px solid ${citizenQuestionAnonymous ? "var(--primary)" : "var(--border)"}`, background: citizenQuestionAnonymous ? "var(--primary)" : "#fff", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, transition: "all 0.2s" }}
+              >
+                {citizenQuestionAnonymous && <Icon name="check" size={14} color="#fff" />}
+              </div>
+              <span style={{ fontSize: 14, lineHeight: 1.4 }}>Send anonymt — mit navn vises ikke ved spørgsmålet</span>
+            </label>
+            <div style={{ display: "flex", gap: 12 }}>
+              <button
+                onClick={() => { setShowCitizenQuestionModal(false); setCitizenQuestionText(""); setCitizenQuestionAnonymous(false); }}
+                style={{ ...bs, flex: 1 }}
+              >Annuller</button>
+              <button
+                onClick={async () => {
+                  if (citizenQuestionText.trim().length < 10) return;
+                  setCitizenQuestionSubmitting(true);
+                  try {
+                    const res = await apiFetch(`/api/forloeb/${selectedForloeb.id}/citizen-question`, {
+                      method: "POST",
+                      body: JSON.stringify({ body: citizenQuestionText.trim(), is_anonymous: citizenQuestionAnonymous }),
+                    }, citizenToken);
+                    if (res.ok) setCitizenQuestionSuccess(true);
+                  } catch {}
+                  setCitizenQuestionSubmitting(false);
+                }}
+                disabled={citizenQuestionText.trim().length < 10 || citizenQuestionSubmitting}
+                style={{ ...bp, flex: 1, opacity: citizenQuestionText.trim().length < 10 ? 0.4 : 1 }}
+              >
+                {citizenQuestionSubmitting ? "Sender..." : "Send spørgsmål"}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+
   return null;
 };
 
@@ -1369,24 +1553,31 @@ const AdminPanel = ({ adminToken, onLogout }) => {
   const [citizenSearch, setCitizenSearch] = useState("");
   const [citizenResults, setCitizenResults] = useState([]);
   const [resetResult, setResetResult] = useState(null); // { email, temp_password, expires_at }
+  const [forloebList, setForloebList] = useState([]);
+  const [editingForloeb, setEditingForloeb] = useState(null); // null | 'new' | { ...forloeb }
+  const [newForloebData, setNewForloebData] = useState({ title: "", description: "", slug: "", mode: "themes", allow_citizen_questions: false, citizen_question_requires_approval: true, is_active: true, sort_order: 0 });
+  const [pendingQuestions, setPendingQuestions] = useState([]);
+  const [pendingForloebId, setPendingForloebId] = useState(null);
 
   const adminFetch = (path, options = {}) => apiFetch(path, options, adminToken);
 
   // Load initial data
   useEffect(() => {
     const load = async () => {
-      const [themesRes, areasRes, questionsRes, dashRes, aiRes] = await Promise.all([
+      const [themesRes, areasRes, questionsRes, dashRes, aiRes, forloebRes] = await Promise.all([
         fetch(`${API_BASE}/api/themes`),
         fetch(`${API_BASE}/api/areas`),
         adminFetch("/api/admin/questions"),
         adminFetch("/api/admin/dashboard"),
         adminFetch("/api/admin/ai-settings"),
+        adminFetch("/api/admin/forloeb"),
       ]);
       if (themesRes.ok) setThemes(await themesRes.json());
       if (areasRes.ok) setAreas(await areasRes.json());
       if (questionsRes.ok) setQuestions(await questionsRes.json());
       if (dashRes.ok) setDashboard(await dashRes.json());
       if (aiRes.ok) setAiSettings(await aiRes.json());
+      if (forloebRes.ok) setForloebList(await forloebRes.json());
     };
     load();
   }, []);
@@ -1420,8 +1611,17 @@ const AdminPanel = ({ adminToken, onLogout }) => {
       .then(setConsentOverview);
   }, [tab]);
 
+  // Load forløb
+  useEffect(() => {
+    if (tab !== "forloeb") return;
+    adminFetch("/api/admin/forloeb")
+      .then(r => r.ok ? r.json() : [])
+      .then(setForloebList);
+  }, [tab]);
+
   const tabs = [
     { id: "dashboard", label: "Dashboard", icon: "chart" },
+    { id: "forloeb", label: "Forløb", icon: "list" },
     { id: "questions", label: "Spørgsmål", icon: "questions" },
     { id: "responses", label: "Besvarelser", icon: "list" },
     { id: "moderation", label: "Moderation", icon: "settings" },
@@ -1662,12 +1862,265 @@ const AdminPanel = ({ adminToken, onLogout }) => {
           </div>
         )}
 
+        {/* ── Forløb Tab ── */}
+        {tab === "forloeb" && (
+          <div className="fade-in">
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
+              <h1 style={{ fontSize: 28, fontWeight: 700 }}>Forløb</h1>
+              <button
+                onClick={() => { setEditingForloeb("new"); setNewForloebData({ title: "", description: "", slug: "", mode: "themes", allow_citizen_questions: false, citizen_question_requires_approval: true, is_active: true, sort_order: 0 }); }}
+                style={{ padding: "10px 20px", borderRadius: 10, border: "none", background: "var(--primary)", color: "#fff", cursor: "pointer", fontFamily: "DM Sans", fontSize: 14, fontWeight: 600 }}
+              >+ Nyt forløb</button>
+            </div>
+
+            {/* Opret/rediger forløb */}
+            {editingForloeb && (
+              <div style={{ background: "var(--card)", borderRadius: 16, padding: 24, border: "1px solid var(--primary)", marginBottom: 24 }}>
+                <h3 style={{ fontSize: 17, fontWeight: 700, marginBottom: 16 }}>
+                  {editingForloeb === "new" ? "Opret nyt forløb" : `Rediger: ${editingForloeb.title}`}
+                </h3>
+                {[
+                  { label: "Titel", key: "title", type: "text", placeholder: "F.eks. Budget 2027" },
+                  { label: "URL-navn (slug)", key: "slug", type: "text", placeholder: "f.eks. budget-2027" },
+                ].map(({ label, key, type, placeholder }) => (
+                  <div key={key} style={{ marginBottom: 14 }}>
+                    <label style={{ display: "block", fontSize: 13, fontWeight: 600, marginBottom: 4 }}>{label}</label>
+                    <input
+                      type={type}
+                      value={editingForloeb === "new" ? newForloebData[key] : editingForloeb[key] || ""}
+                      onChange={e => {
+                        const val = e.target.value;
+                        if (editingForloeb === "new") setNewForloebData(p => ({ ...p, [key]: val }));
+                        else setEditingForloeb(p => ({ ...p, [key]: val }));
+                      }}
+                      placeholder={placeholder}
+                      style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid var(--border)", fontSize: 15 }}
+                    />
+                  </div>
+                ))}
+                <div style={{ marginBottom: 14 }}>
+                  <label style={{ display: "block", fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Beskrivelse</label>
+                  <textarea
+                    value={editingForloeb === "new" ? newForloebData.description || "" : editingForloeb.description || ""}
+                    onChange={e => {
+                      const val = e.target.value;
+                      if (editingForloeb === "new") setNewForloebData(p => ({ ...p, description: val }));
+                      else setEditingForloeb(p => ({ ...p, description: val }));
+                    }}
+                    placeholder="Kort beskrivelse til borgeren..."
+                    style={{ width: "100%", minHeight: 70, padding: "10px 14px", borderRadius: 10, border: "1px solid var(--border)", fontSize: 15, resize: "vertical" }}
+                  />
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 14 }}>
+                  <div>
+                    <label style={{ display: "block", fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Tilstand</label>
+                    <select
+                      value={editingForloeb === "new" ? newForloebData.mode : editingForloeb.mode}
+                      onChange={e => {
+                        const val = e.target.value;
+                        if (editingForloeb === "new") setNewForloebData(p => ({ ...p, mode: val }));
+                        else setEditingForloeb(p => ({ ...p, mode: val }));
+                      }}
+                      style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid var(--border)", fontSize: 15 }}
+                    >
+                      <option value="themes">Temaer</option>
+                      <option value="questions">Spørgsmål (direkte)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ display: "block", fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Status</label>
+                    <select
+                      value={editingForloeb === "new" ? String(newForloebData.is_active) : String(editingForloeb.is_active)}
+                      onChange={e => {
+                        const val = e.target.value === "true";
+                        if (editingForloeb === "new") setNewForloebData(p => ({ ...p, is_active: val }));
+                        else setEditingForloeb(p => ({ ...p, is_active: val }));
+                      }}
+                      style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid var(--border)", fontSize: 15 }}
+                    >
+                      <option value="true">Aktivt</option>
+                      <option value="false">Inaktivt</option>
+                    </select>
+                  </div>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 20 }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={editingForloeb === "new" ? newForloebData.allow_citizen_questions : editingForloeb.allow_citizen_questions}
+                      onChange={e => {
+                        const val = e.target.checked;
+                        if (editingForloeb === "new") setNewForloebData(p => ({ ...p, allow_citizen_questions: val }));
+                        else setEditingForloeb(p => ({ ...p, allow_citizen_questions: val }));
+                      }}
+                    />
+                    <span style={{ fontSize: 13 }}>Borgere kan stille spørgsmål</span>
+                  </label>
+                  <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={editingForloeb === "new" ? newForloebData.citizen_question_requires_approval : editingForloeb.citizen_question_requires_approval}
+                      onChange={e => {
+                        const val = e.target.checked;
+                        if (editingForloeb === "new") setNewForloebData(p => ({ ...p, citizen_question_requires_approval: val }));
+                        else setEditingForloeb(p => ({ ...p, citizen_question_requires_approval: val }));
+                      }}
+                    />
+                    <span style={{ fontSize: 13 }}>Borgerspørgsmål kræver godkendelse</span>
+                  </label>
+                </div>
+                <div style={{ display: "flex", gap: 12 }}>
+                  <button
+                    onClick={async () => {
+                      const payload = editingForloeb === "new" ? newForloebData : editingForloeb;
+                      const method = editingForloeb === "new" ? "POST" : "PUT";
+                      const url = editingForloeb === "new" ? "/api/admin/forloeb" : `/api/admin/forloeb/${editingForloeb.id}`;
+                      const res = await adminFetch(url, { method, body: JSON.stringify(payload) });
+                      if (res.ok) {
+                        const updated = await adminFetch("/api/admin/forloeb").then(r => r.ok ? r.json() : []);
+                        setForloebList(updated);
+                        setEditingForloeb(null);
+                      }
+                    }}
+                    style={{ padding: "10px 24px", borderRadius: 10, border: "none", background: "var(--primary)", color: "#fff", cursor: "pointer", fontFamily: "DM Sans", fontSize: 14, fontWeight: 600 }}
+                  >{editingForloeb === "new" ? "Opret forløb" : "Gem ændringer"}</button>
+                  <button onClick={() => setEditingForloeb(null)} style={{ padding: "10px 20px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--card)", cursor: "pointer", fontFamily: "DM Sans", fontSize: 14 }}>Annuller</button>
+                </div>
+              </div>
+            )}
+
+            {/* Liste over forløb */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              {forloebList.length === 0 && <p style={{ color: "var(--muted)", fontSize: 14 }}>Ingen forløb oprettet endnu.</p>}
+              {forloebList.map(f => (
+                <div key={f.id} style={{ background: "var(--card)", borderRadius: 16, padding: 20, border: "1px solid var(--border)" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
+                    <div>
+                      <h3 style={{ fontSize: 17, fontWeight: 700, marginBottom: 2 }}>{f.title}</h3>
+                      <div style={{ fontSize: 13, color: "var(--muted)" }}>
+                        /{f.slug} · {f.mode === "themes" ? "Temaer" : "Direkte spørgsmål"} · {f.is_active ? "✅ Aktivt" : "⏸ Inaktivt"}
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button onClick={() => setEditingForloeb({ ...f })} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--bg)", cursor: "pointer", fontFamily: "DM Sans", fontSize: 13 }}>Rediger</button>
+                      <button
+                        onClick={async () => {
+                          if (!confirm(`Slet forløbet "${f.title}"?`)) return;
+                          await adminFetch(`/api/admin/forloeb/${f.id}`, { method: "DELETE" });
+                          setForloebList(prev => prev.filter(x => x.id !== f.id));
+                        }}
+                        style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--bg)", cursor: "pointer", fontFamily: "DM Sans", fontSize: 13, color: "var(--danger)" }}
+                      >Slet</button>
+                    </div>
+                  </div>
+                  {f.description && <p style={{ fontSize: 14, color: "var(--muted)", marginBottom: 12, lineHeight: 1.5 }}>{f.description}</p>}
+
+                  {/* Tilknyttet indhold */}
+                  {f.mode === "themes" && f.themes && (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: f.allow_citizen_questions ? 12 : 0 }}>
+                      {f.themes.map(t => (
+                        <span key={t.id} style={{ fontSize: 12, padding: "3px 10px", borderRadius: 20, background: "var(--primary-pale)", color: "var(--primary)", border: "1px solid var(--primary)" }}>
+                          {t.icon} {t.name} ({t.question_count} spørgsmål)
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  {f.mode === "questions" && (
+                    <p style={{ fontSize: 13, color: "var(--muted)", marginBottom: f.allow_citizen_questions ? 12 : 0 }}>{f.question_count} aktive spørgsmål</p>
+                  )}
+
+                  {/* Borgerspørgsmål */}
+                  {f.allow_citizen_questions && (
+                    <div style={{ borderTop: "1px solid var(--border)", paddingTop: 12, marginTop: 8 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <span style={{ fontSize: 13, color: "var(--primary)", fontWeight: 500 }}>💬 Borgere kan stille spørgsmål{f.citizen_question_requires_approval ? " (kræver godkendelse)" : ""}</span>
+                        <button
+                          onClick={async () => {
+                            const res = await adminFetch(`/api/admin/forloeb/${f.id}/pending-questions`);
+                            if (res.ok) {
+                              setPendingQuestions(await res.json());
+                              setPendingForloebId(f.id);
+                            }
+                          }}
+                          style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid var(--primary)", background: "var(--primary-pale)", cursor: "pointer", fontFamily: "DM Sans", fontSize: 13, color: "var(--primary)" }}
+                        >Se afventende spørgsmål</button>
+                      </div>
+                      {pendingForloebId === f.id && pendingQuestions.length > 0 && (
+                        <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 10 }}>
+                          {pendingQuestions.map(q => (
+                            <div key={q.id} style={{ padding: 14, background: "var(--bg)", borderRadius: 10, border: "1px solid var(--border)" }}>
+                              <p style={{ fontSize: 14, fontWeight: 500, marginBottom: 4 }}>{q.body}</p>
+                              <p style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
+                                Fra: {q.is_anonymous ? "Anonym" : (q.submitted_by_email || "Ukendt")} · {fmt(q.created_at)}
+                              </p>
+                              <div style={{ display: "flex", gap: 8 }}>
+                                <button
+                                  onClick={async () => {
+                                    await adminFetch(`/api/admin/questions/${q.id}/approve`, { method: "PUT" });
+                                    setPendingQuestions(prev => prev.filter(x => x.id !== q.id));
+                                  }}
+                                  style={{ padding: "6px 14px", borderRadius: 8, border: "none", background: "var(--primary)", color: "#fff", cursor: "pointer", fontFamily: "DM Sans", fontSize: 13 }}
+                                >Godkend</button>
+                                <button
+                                  onClick={async () => {
+                                    await adminFetch(`/api/admin/questions/${q.id}`, { method: "DELETE" }).catch(() => {});
+                                    setPendingQuestions(prev => prev.filter(x => x.id !== q.id));
+                                  }}
+                                  style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--bg)", cursor: "pointer", fontFamily: "DM Sans", fontSize: 13, color: "var(--danger)" }}
+                                >Afvis</button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {pendingForloebId === f.id && pendingQuestions.length === 0 && (
+                        <p style={{ fontSize: 13, color: "var(--muted)", marginTop: 8 }}>Ingen afventende spørgsmål.</p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {/* Tema-tilknytning (themes-mode forløb) */}
+            {forloebList.some(f => f.mode === "themes") && (
+              <div style={{ background: "var(--card)", borderRadius: 16, padding: 20, border: "1px solid var(--border)", marginTop: 24 }}>
+                <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 12 }}>Tilknyt temaer til forløb</h3>
+                <p style={{ fontSize: 13, color: "var(--muted)", marginBottom: 14 }}>Vælg hvilket forløb hvert tema tilhører.</p>
+                {themes.map(t => (
+                  <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 10 }}>
+                    <span style={{ fontSize: 20 }}>{t.icon}</span>
+                    <span style={{ fontSize: 14, flex: 1 }}>{t.name}</span>
+                    <select
+                      value={t.forloeb_id || ""}
+                      onChange={async e => {
+                        const fid = e.target.value || null;
+                        const res = await adminFetch(`/api/admin/themes/${t.id}/forloeb?forloeb_id=${fid || ""}`, { method: "PUT" });
+                        if (res.ok) {
+                          const updated = await fetch(`${API_BASE}/api/themes`).then(r => r.json());
+                          setThemes(updated);
+                        }
+                      }}
+                      style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid var(--border)", fontSize: 13 }}
+                    >
+                      <option value="">Ikke tilknyttet</option>
+                      {forloebList.filter(f => f.mode === "themes").map(f => (
+                        <option key={f.id} value={f.id}>{f.title}</option>
+                      ))}
+                    </select>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* ── Questions Tab ── */}
         {tab === "questions" && (
           <div className="fade-in">
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
               <h1 style={{ fontSize: 28, fontWeight: 700 }}>Spørgsmål</h1>
-              <button onClick={() => setEditingQ({ id: uid(), theme_id: themes[0]?.id || "", title: "", body: "", is_active: true, allow_followup: true, followup_prompt: "", sort_order: 99 })}
+              <button onClick={() => setEditingQ({ id: uid(), theme_id: themes[0]?.id || null, forloeb_id: null, title: "", body: "", is_active: true, allow_followup: true, followup_prompt: "", sort_order: 99 })}
                 style={{ padding: "10px 20px", borderRadius: 10, border: "none", background: "var(--primary)", color: "#fff", cursor: "pointer", fontFamily: "DM Sans", fontSize: 14, fontWeight: 600 }}>
                 + Nyt spørgsmål
               </button>
@@ -1707,10 +2160,24 @@ const AdminPanel = ({ adminToken, onLogout }) => {
                 <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 16 }}>{questions.find(q => q.id === editingQ.id) ? "Rediger" : "Nyt"} spørgsmål</h3>
                 <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
                   <div>
-                    <label style={{ fontSize: 13, fontWeight: 600, marginBottom: 4, display: "block" }}>Tema</label>
-                    <select value={editingQ.theme_id} onChange={e => setEditingQ({ ...editingQ, theme_id: e.target.value })}
-                      style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid var(--border)", fontSize: 14 }}>
-                      {themes.map(t => <option key={t.id} value={t.id}>{t.icon} {t.name}</option>)}
+                    <label style={{ fontSize: 13, fontWeight: 600, marginBottom: 4, display: "block" }}>Tilhørsforhold</label>
+                    <select
+                      value={editingQ.forloeb_id ? `f:${editingQ.forloeb_id}` : (editingQ.theme_id ? `t:${editingQ.theme_id}` : "")}
+                      onChange={e => {
+                        const v = e.target.value;
+                        if (v.startsWith("t:")) setEditingQ({ ...editingQ, theme_id: v.slice(2), forloeb_id: null });
+                        else if (v.startsWith("f:")) setEditingQ({ ...editingQ, theme_id: null, forloeb_id: v.slice(2) });
+                        else setEditingQ({ ...editingQ, theme_id: null, forloeb_id: null });
+                      }}
+                      style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid var(--border)", fontSize: 14 }}
+                    >
+                      <option value="">— Vælg —</option>
+                      {themes.length > 0 && <optgroup label="Temaer">
+                        {themes.map(t => <option key={t.id} value={`t:${t.id}`}>{t.icon} {t.name}</option>)}
+                      </optgroup>}
+                      {forloebList.filter(f => f.mode === "questions").length > 0 && <optgroup label="Forløb (direkte spørgsmål)">
+                        {forloebList.filter(f => f.mode === "questions").map(f => <option key={f.id} value={`f:${f.id}`}>📋 {f.title}</option>)}
+                      </optgroup>}
                     </select>
                   </div>
                   <div>
@@ -1739,6 +2206,7 @@ const AdminPanel = ({ adminToken, onLogout }) => {
               </div>
             )}
 
+            {/* Tema-spørgsmål */}
             {themes.map(theme => {
               const themeQs = questions.filter(q => q.theme_id === theme.id).sort((a,b) => a.sort_order - b.sort_order);
               return (
@@ -1746,6 +2214,7 @@ const AdminPanel = ({ adminToken, onLogout }) => {
                   <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 10, display: "flex", alignItems: "center", gap: 8 }}>
                     <span>{theme.icon}</span> {theme.name}
                   </h3>
+                  {themeQs.length === 0 && <p style={{ fontSize: 13, color: "var(--muted)", padding: "8px 0" }}>Ingen spørgsmål i dette tema.</p>}
                   {themeQs.map(q => (
                     <div key={q.id} style={{ ...cardStyle, marginBottom: 10, display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 20px", opacity: q.is_active ? 1 : 0.5 }}>
                       <div style={{ flex: 1 }}>
@@ -1753,6 +2222,7 @@ const AdminPanel = ({ adminToken, onLogout }) => {
                         <div style={{ fontSize: 13, color: "var(--muted)", marginTop: 2 }}>{q.body}</div>
                         <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 4 }}>
                           <span>{q.allow_followup ? "✅ Opfølgning" : "❌ Ingen opfølgning"}</span>
+                          {q.is_citizen_submitted && <span style={{ marginLeft: 8, color: "var(--accent)" }}>💬 Borgerspørgsmål{!q.is_approved ? " ⏳" : ""}</span>}
                         </div>
                       </div>
                       <div style={{ display: "flex", gap: 8 }}>
@@ -1766,6 +2236,35 @@ const AdminPanel = ({ adminToken, onLogout }) => {
                 </div>
               );
             })}
+
+            {/* Forløb-spørgsmål (questions-mode) */}
+            {(() => {
+              const looseQs = questions.filter(q => !q.theme_id && q.forloeb_id).sort((a,b) => a.sort_order - b.sort_order);
+              if (looseQs.length === 0) return null;
+              return (
+                <div style={{ marginBottom: 24 }}>
+                  <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 10, color: "var(--primary)" }}>📋 Direkte forløb-spørgsmål</h3>
+                  {looseQs.map(q => (
+                    <div key={q.id} style={{ ...cardStyle, marginBottom: 10, display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 20px", opacity: q.is_active ? 1 : 0.5 }}>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: 600, fontSize: 14 }}>{q.title}</div>
+                        <div style={{ fontSize: 13, color: "var(--muted)", marginTop: 2 }}>{q.body}</div>
+                        <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 4 }}>
+                          <span>{q.allow_followup ? "✅ Opfølgning" : "❌ Ingen opfølgning"}</span>
+                          {q.is_citizen_submitted && <span style={{ marginLeft: 8, color: "var(--accent)" }}>💬 Borgerspørgsmål{!q.is_approved ? " ⏳" : ""}</span>}
+                        </div>
+                      </div>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <button onClick={() => setEditingQ({ ...q })} style={{ padding: "6px 12px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--card)", cursor: "pointer", fontFamily: "DM Sans", fontSize: 12 }}>Rediger</button>
+                        <button onClick={() => toggleQuestion(q.id)} style={{ padding: "6px 12px", borderRadius: 6, border: "1px solid var(--border)", background: q.is_active ? "#FEF2F2" : "var(--primary-pale)", cursor: "pointer", fontFamily: "DM Sans", fontSize: 12, color: q.is_active ? "var(--danger)" : "var(--primary)" }}>
+                          {q.is_active ? "Deaktivér" : "Aktivér"}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
           </div>
         )}
 

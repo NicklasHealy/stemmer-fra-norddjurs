@@ -4,7 +4,15 @@
       "Bash(npx vite:*)",
       "Bash(python -m py_compile main.py models.py)",
       "Bash(python -m py_compile database.py main.py)",
-      "Bash(python -m py_compile main.py models.py database.py)"
+      "Bash(python -m py_compile main.py models.py database.py)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\(''models.py''\\).read\\(\\)\\); print\\(''models.py OK''\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\(''database.py''\\).read\\(\\)\\); print\\(''database.py OK''\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\(''main.py''\\).read\\(\\)\\); print\\(''main.py OK''\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\(''main.py'', encoding=''utf-8''\\).read\\(\\)\\); print\\(''main.py OK''\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\(''models.py'', encoding=''utf-8''\\).read\\(\\)\\); print\\(''models.py OK''\\)\")",
+      "Bash(python -c \"import ast; [print\\(f+'' OK''\\) for f in [''models.py'',''database.py'',''main.py''] if not ast.parse\\(open\\(f,encoding=''utf-8''\\).read\\(\\)\\)]\")",
+      "Bash(python -c \":*)",
+      "Bash(node -e \":*)"
     ]
   }
 }

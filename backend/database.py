@@ -90,6 +90,49 @@ def migrate_db():
         else:
             migrations.append("ALTER TABLE citizens ADD temp_password_expires DATETIME NULL")
 
+    # ── Forløb-migrationer ──────────────────────────────────────────
+    # themes.forloeb_id
+    try:
+        themes_cols = {col["name"] for col in inspector.get_columns("themes")}
+        if "forloeb_id" not in themes_cols:
+            if is_sqlite:
+                migrations.append("ALTER TABLE themes ADD COLUMN forloeb_id VARCHAR(36) NULL")
+            else:
+                migrations.append("ALTER TABLE themes ADD forloeb_id VARCHAR(36) NULL")
+    except Exception:
+        pass
+
+    # questions: nye kolonner
+    try:
+        q_cols = {col["name"] for col in inspector.get_columns("questions")}
+        if "forloeb_id" not in q_cols:
+            if is_sqlite:
+                migrations.append("ALTER TABLE questions ADD COLUMN forloeb_id VARCHAR(36) NULL")
+            else:
+                migrations.append("ALTER TABLE questions ADD forloeb_id VARCHAR(36) NULL")
+        if "is_citizen_submitted" not in q_cols:
+            if is_sqlite:
+                migrations.append("ALTER TABLE questions ADD COLUMN is_citizen_submitted BOOLEAN NOT NULL DEFAULT 0")
+            else:
+                migrations.append("ALTER TABLE questions ADD is_citizen_submitted BIT NOT NULL DEFAULT 0")
+        if "submitted_by_citizen_id" not in q_cols:
+            if is_sqlite:
+                migrations.append("ALTER TABLE questions ADD COLUMN submitted_by_citizen_id VARCHAR(36) NULL")
+            else:
+                migrations.append("ALTER TABLE questions ADD submitted_by_citizen_id VARCHAR(36) NULL")
+        if "is_approved" not in q_cols:
+            if is_sqlite:
+                migrations.append("ALTER TABLE questions ADD COLUMN is_approved BOOLEAN NOT NULL DEFAULT 1")
+            else:
+                migrations.append("ALTER TABLE questions ADD is_approved BIT NOT NULL DEFAULT 1")
+        if "is_anonymous" not in q_cols:
+            if is_sqlite:
+                migrations.append("ALTER TABLE questions ADD COLUMN is_anonymous BOOLEAN NOT NULL DEFAULT 0")
+            else:
+                migrations.append("ALTER TABLE questions ADD is_anonymous BIT NOT NULL DEFAULT 0")
+    except Exception:
+        pass
+
     if migrations:
         with engine.connect() as conn:
             for sql in migrations:

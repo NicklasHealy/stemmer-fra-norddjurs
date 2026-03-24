@@ -53,7 +53,7 @@ backend/models/
 
 
 # Andre filer, der ikke skal committes
-CLAUDE.md
+CLAUDE*.md
 *.pdf
 *.code-workspace
 

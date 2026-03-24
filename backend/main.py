@@ -36,7 +36,7 @@ from database import get_db, init_db, migrate_db, engine
 from models import (
     Theme, Question, Citizen, Response, ResponseMetadata,
     AnalysisCache, AdminUser, AISettings, Area, ModerationRule, ConsentLog,
-    PasswordResetLog, Base,
+    PasswordResetLog, Forloeb, Base,
 )
 from auth import (
     hash_password, verify_password, create_token,
@@ -84,7 +84,7 @@ PRIVACY_POLICY_TEXT = (
     "## Hvilke oplysninger indsamler vi?\n\n"
     "- **Email-adresse** — bruges til login\n"
     "- **Adgangskode** — opbevares krypteret (bcrypt), aldrig i klartekst\n"
-    "- **Dine besvarelser** — tekst og/eller lydoptagelser (max 30 sekunder)\n"
+    "- **Dine besvarelser** — tekst og/eller lydoptagelser (max 90 sekunder)\n"
     "- **Frivillig metadata** — aldersgruppe og by/område\n\n"
     "---\n\n"
     "## AI-behandling\n\n"
@@ -178,7 +178,8 @@ class MetadataUpdate(BaseModel):
     role: Optional[str] = None
 
 class QuestionCreate(BaseModel):
-    theme_id: str
+    theme_id: Optional[str] = None    # None i questions-mode forløb
+    forloeb_id: Optional[str] = None  # Sættes i questions-mode
     title: str
     body: str
     is_active: bool = True
@@ -235,6 +236,34 @@ class ModerationRuleCreate(BaseModel):
 class ChangePasswordRequest(BaseModel):
     new_password: str
     confirm_password: str
+
+class ForloebCreate(BaseModel):
+    title: str
+    description: Optional[str] = None
+    slug: str
+    mode: str = "themes"   # 'themes' | 'questions'
+    allow_citizen_questions: bool = False
+    citizen_question_requires_approval: bool = True
+    is_active: bool = True
+    start_date: Optional[datetime] = None
+    end_date: Optional[datetime] = None
+    sort_order: int = 0
+
+class ForloebUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    slug: Optional[str] = None
+    mode: Optional[str] = None
+    allow_citizen_questions: Optional[bool] = None
+    citizen_question_requires_approval: Optional[bool] = None
+    is_active: Optional[bool] = None
+    start_date: Optional[datetime] = None
+    end_date: Optional[datetime] = None
+    sort_order: Optional[int] = None
+
+class CitizenQuestionCreate(BaseModel):
+    body: str
+    is_anonymous: bool = False
 
 
 def generate_temp_password() -> str:
@@ -362,7 +391,7 @@ def citizen_responses(citizen: Citizen = Depends(get_current_citizen), db: Sessi
     result = []
     for r in responses:
         q = db.query(Question).filter(Question.id == r.question_id).first()
-        t = db.query(Theme).filter(Theme.id == q.theme_id).first() if q else None
+        t = db.query(Theme).filter(Theme.id == q.theme_id).first() if q and q.theme_id else None
         followup = db.query(Response).filter(Response.parent_response_id == r.id).first() if not r.is_followup else None
         result.append({
             **_response_dict(r),
@@ -440,7 +469,7 @@ def citizen_export(citizen: Citizen = Depends(get_current_citizen), db: Session 
     result = []
     for r in responses:
         q = db.query(Question).filter(Question.id == r.question_id).first()
-        t = db.query(Theme).filter(Theme.id == q.theme_id).first() if q else None
+        t = db.query(Theme).filter(Theme.id == q.theme_id).first() if q and q.theme_id else None
         result.append({
             "id": r.id,
             "question": q.body if q else None,
@@ -462,6 +491,85 @@ def citizen_export(citizen: Citizen = Depends(get_current_citizen), db: Session 
         "metadata": _meta_dict(meta) if meta else None,
         "responses": result,
     }
+
+
+# ═══════════════════════════════════════════════
+# ─── PUBLIC: FORLØB ────────────────────────────
+# ═══════════════════════════════════════════════
+
+@app.get("/api/forloeb")
+def get_forloeb(db: Session = Depends(get_db)):
+    """Aktive forløb — returnerer temaer (themes-mode) eller spørgsmålsantal (questions-mode)."""
+    forloeb_list = db.query(Forloeb).filter(Forloeb.is_active == True).order_by(Forloeb.sort_order).all()
+    return [_forloeb_dict(f, db) for f in forloeb_list]
+
+
+@app.get("/api/forloeb/{forloeb_id}/questions")
+def get_forloeb_questions(forloeb_id: str, db: Session = Depends(get_db)):
+    """Direkte spørgsmål i et forløb med mode='questions'."""
+    f = db.query(Forloeb).filter(Forloeb.id == forloeb_id, Forloeb.is_active == True).first()
+    if not f:
+        raise HTTPException(404, "Forløb ikke fundet")
+    questions = db.query(Question).filter(
+        Question.forloeb_id == forloeb_id,
+        Question.is_active == True,
+        Question.is_approved == True,
+    ).order_by(Question.sort_order).all()
+    result = []
+    for q in questions:
+        d = _question_dict(q)
+        if q.is_citizen_submitted and not q.is_anonymous and q.submitted_by_citizen_id:
+            submitter = db.query(Citizen).filter(Citizen.id == q.submitted_by_citizen_id).first()
+            d["submitted_by_name"] = submitter.email if submitter else None
+        else:
+            d["submitted_by_name"] = None
+        result.append(d)
+    return result
+
+
+@app.post("/api/forloeb/{forloeb_id}/citizen-question")
+def submit_citizen_question(
+    forloeb_id: str,
+    data: CitizenQuestionCreate,
+    citizen: Citizen = Depends(get_current_citizen),
+    db: Session = Depends(get_db),
+):
+    """Borger stiller et spørgsmål i et forløb."""
+    f = db.query(Forloeb).filter(Forloeb.id == forloeb_id, Forloeb.is_active == True).first()
+    if not f:
+        raise HTTPException(404, "Forløb ikke fundet")
+    if not f.allow_citizen_questions:
+        raise HTTPException(403, "Dette forløb tillader ikke borgerspørgsmål")
+
+    body = data.body.strip()
+    if len(body) < 10:
+        raise HTTPException(400, "Spørgsmålet skal være mindst 10 tegn")
+    if len(body) > 500:
+        raise HTTPException(400, "Spørgsmålet må højst være 500 tegn")
+
+    needs_approval = f.citizen_question_requires_approval
+    q = Question(
+        id=str(uuid.uuid4()),
+        theme_id=None,
+        forloeb_id=forloeb_id,
+        title="Borgerspørgsmål",
+        body=body,
+        is_active=True,
+        allow_followup=True,
+        followup_prompt="",
+        sort_order=999,
+        is_citizen_submitted=True,
+        submitted_by_citizen_id=citizen.id,
+        is_approved=not needs_approval,
+        is_anonymous=data.is_anonymous,
+    )
+    db.add(q)
+    db.commit()
+    db.refresh(q)
+
+    if needs_approval:
+        return {"ok": True, "message": "Dit spørgsmål er modtaget og vil blive gennemgået"}
+    return {"ok": True, "message": "Dit spørgsmål er tilføjet til forløbet", "question": _question_dict(q)}
 
 
 # ═══════════════════════════════════════════════
@@ -726,6 +834,111 @@ def admin_delete_theme(theme_id: str, admin: AdminUser = Depends(get_current_adm
 
 
 # ═══════════════════════════════════════════════
+# ─── ADMIN: FORLØB CRUD ─────────────────────────
+# ═══════════════════════════════════════════════
+
+@app.get("/api/admin/forloeb")
+def admin_list_forloeb(admin: AdminUser = Depends(get_current_admin), db: Session = Depends(get_db)):
+    forloeb_list = db.query(Forloeb).order_by(Forloeb.sort_order).all()
+    return [_forloeb_dict(f, db) for f in forloeb_list]
+
+
+@app.post("/api/admin/forloeb")
+def admin_create_forloeb(data: ForloebCreate, admin: AdminUser = Depends(get_current_admin), db: Session = Depends(get_db)):
+    slug = data.slug.strip().lower().replace(" ", "-")
+    if db.query(Forloeb).filter(Forloeb.slug == slug).first():
+        raise HTTPException(409, "Et forløb med dette URL-navn eksisterer allerede")
+    f = Forloeb(id=str(uuid.uuid4()), **{**data.model_dump(), "slug": slug})
+    db.add(f)
+    db.commit()
+    db.refresh(f)
+    return _forloeb_dict(f, db)
+
+
+@app.put("/api/admin/forloeb/{forloeb_id}")
+def admin_update_forloeb(forloeb_id: str, data: ForloebUpdate, admin: AdminUser = Depends(get_current_admin), db: Session = Depends(get_db)):
+    f = db.query(Forloeb).filter(Forloeb.id == forloeb_id).first()
+    if not f:
+        raise HTTPException(404, "Forløb ikke fundet")
+    for key, val in data.model_dump(exclude_none=True).items():
+        setattr(f, key, val)
+    f.updated_at = datetime.utcnow()
+    db.commit()
+    return _forloeb_dict(f, db)
+
+
+@app.delete("/api/admin/forloeb/{forloeb_id}")
+def admin_delete_forloeb(forloeb_id: str, admin: AdminUser = Depends(get_current_admin), db: Session = Depends(get_db)):
+    f = db.query(Forloeb).filter(Forloeb.id == forloeb_id).first()
+    if not f:
+        raise HTTPException(404, "Forløb ikke fundet")
+    # Fjern forloeb_id-reference på tilknyttede temaer
+    db.query(Theme).filter(Theme.forloeb_id == forloeb_id).update({"forloeb_id": None})
+    db.delete(f)
+    db.commit()
+    return {"ok": True}
+
+
+@app.put("/api/admin/themes/{theme_id}/forloeb")
+def admin_set_theme_forloeb(
+    theme_id: str,
+    forloeb_id: Optional[str] = None,
+    admin: AdminUser = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    """Tilknyt eller afknyt et tema fra et forløb."""
+    theme = db.query(Theme).filter(Theme.id == theme_id).first()
+    if not theme:
+        raise HTTPException(404, "Tema ikke fundet")
+    theme.forloeb_id = forloeb_id if forloeb_id else None  # tom streng → None
+    db.commit()
+    return _theme_dict(theme, db)
+
+
+@app.get("/api/admin/forloeb/{forloeb_id}/pending-questions")
+def admin_pending_questions(forloeb_id: str, admin: AdminUser = Depends(get_current_admin), db: Session = Depends(get_db)):
+    """Borgerspørgsmål der afventer godkendelse."""
+    questions = db.query(Question).filter(
+        Question.forloeb_id == forloeb_id,
+        Question.is_citizen_submitted == True,
+        Question.is_approved == False,
+    ).order_by(Question.created_at.desc()).all()
+    result = []
+    for q in questions:
+        d = _question_dict(q)
+        if q.submitted_by_citizen_id:
+            submitter = db.query(Citizen).filter(Citizen.id == q.submitted_by_citizen_id).first()
+            d["submitted_by_email"] = submitter.email if submitter else None
+        result.append(d)
+    return result
+
+
+@app.put("/api/admin/questions/{question_id}/approve")
+def admin_approve_question(question_id: str, admin: AdminUser = Depends(get_current_admin), db: Session = Depends(get_db)):
+    """Godkend et borgerstillet spørgsmål."""
+    q = db.query(Question).filter(Question.id == question_id).first()
+    if not q:
+        raise HTTPException(404, "Spørgsmål ikke fundet")
+    q.is_approved = True
+    q.updated_at = datetime.utcnow()
+    db.commit()
+    return _question_dict(q)
+
+
+@app.delete("/api/admin/questions/{question_id}")
+def admin_delete_question(question_id: str, admin: AdminUser = Depends(get_current_admin), db: Session = Depends(get_db)):
+    """Slet et borgerstillet spørgsmål (afvis)."""
+    q = db.query(Question).filter(Question.id == question_id).first()
+    if not q:
+        raise HTTPException(404, "Spørgsmål ikke fundet")
+    if not getattr(q, "is_citizen_submitted", False):
+        raise HTTPException(403, "Kun borgerstillede spørgsmål kan slettes via denne endpoint")
+    db.delete(q)
+    db.commit()
+    return {"ok": True}
+
+
+# ═══════════════════════════════════════════════
 # ─── ADMIN: QUESTIONS CRUD ─────────────────────
 # ═══════════════════════════════════════════════
 
@@ -798,7 +1011,7 @@ def admin_list_responses(
     result = []
     for r in responses:
         q = db.query(Question).filter(Question.id == r.question_id).first()
-        t = db.query(Theme).filter(Theme.id == q.theme_id).first() if q else None
+        t = db.query(Theme).filter(Theme.id == q.theme_id).first() if q and q.theme_id else None
         meta = db.query(ResponseMetadata).filter(ResponseMetadata.citizen_id == r.citizen_id).first() if r.citizen_id else None
         followup = db.query(Response).filter(Response.parent_response_id == r.id).first()
         result.append({
@@ -859,7 +1072,7 @@ def admin_export_csv(admin: AdminUser = Depends(get_current_admin), db: Session 
 
     for r in responses:
         q = db.query(Question).filter(Question.id == r.question_id).first()
-        t = db.query(Theme).filter(Theme.id == q.theme_id).first() if q else None
+        t = db.query(Theme).filter(Theme.id == q.theme_id).first() if q and q.theme_id else None
         meta = db.query(ResponseMetadata).filter(ResponseMetadata.citizen_id == r.citizen_id).first() if r.citizen_id else None
         followup = db.query(Response).filter(Response.parent_response_id == r.id).first()
         writer.writerow([
@@ -1178,10 +1391,52 @@ def _citizen_dict(c: Citizen) -> dict:
 
 def _theme_dict(t: Theme, db: Session) -> dict:
     q_count = db.query(Question).filter(Question.theme_id == t.id, Question.is_active == True).count()
-    return {"id": t.id, "name": t.name, "icon": t.icon, "sort_order": t.sort_order, "question_count": q_count}
+    return {
+        "id": t.id, "name": t.name, "icon": t.icon, "sort_order": t.sort_order,
+        "question_count": q_count,
+        "forloeb_id": getattr(t, "forloeb_id", None),
+    }
 
 def _question_dict(q: Question) -> dict:
-    return {"id": q.id, "theme_id": q.theme_id, "title": q.title, "body": q.body, "is_active": q.is_active, "allow_followup": q.allow_followup, "followup_prompt": q.followup_prompt, "sort_order": q.sort_order}
+    return {
+        "id": q.id,
+        "theme_id": q.theme_id,
+        "forloeb_id": getattr(q, "forloeb_id", None),
+        "title": q.title,
+        "body": q.body,
+        "is_active": q.is_active,
+        "allow_followup": q.allow_followup,
+        "followup_prompt": q.followup_prompt,
+        "sort_order": q.sort_order,
+        "is_citizen_submitted": getattr(q, "is_citizen_submitted", False) or False,
+        "is_approved": getattr(q, "is_approved", True),
+        "is_anonymous": getattr(q, "is_anonymous", False) or False,
+    }
+
+def _forloeb_dict(f: Forloeb, db: Session) -> dict:
+    d = {
+        "id": f.id,
+        "title": f.title,
+        "description": f.description,
+        "slug": f.slug,
+        "mode": f.mode,
+        "allow_citizen_questions": f.allow_citizen_questions,
+        "citizen_question_requires_approval": f.citizen_question_requires_approval,
+        "is_active": f.is_active,
+        "start_date": f.start_date.isoformat() if f.start_date else None,
+        "end_date": f.end_date.isoformat() if f.end_date else None,
+        "sort_order": f.sort_order,
+        "created_at": f.created_at.isoformat() if f.created_at else None,
+    }
+    if f.mode == "themes":
+        d["themes"] = [_theme_dict(t, db) for t in f.themes]
+    else:
+        d["question_count"] = db.query(Question).filter(
+            Question.forloeb_id == f.id,
+            Question.is_active == True,
+            Question.is_approved == True,
+        ).count()
+    return d
 
 def _response_dict(r: Response) -> dict:
     if not r: return None
@@ -1212,7 +1467,20 @@ def seed_data(db: Session):
     if db.query(Theme).count() > 0:
         return
 
-    print("Seeder database med temaer og spørgsmål...")
+    print("Seeder database med forløb, temaer og spørgsmål...")
+
+    # Standard forløb
+    db.add(Forloeb(
+        id="f1",
+        title="Sammen om Norddjurs — Budget 2027",
+        description="Del din holdning til kommunens prioriteringer for Budget 2027. Det tager kun 2-4 minutter.",
+        slug="budget-2027",
+        mode="themes",
+        allow_citizen_questions=False,
+        citizen_question_requires_approval=True,
+        is_active=True,
+        sort_order=1,
+    ))
 
     themes_data = [
         ("t1", "Økonomi & Planlægning", "💰", 1),
@@ -1222,7 +1490,7 @@ def seed_data(db: Session):
         ("t5", "Kultur, Fritid & Idræt", "🎭", 5),
     ]
     for tid, name, icon, order in themes_data:
-        db.add(Theme(id=tid, name=name, icon=icon, sort_order=order))
+        db.add(Theme(id=tid, name=name, icon=icon, sort_order=order, forloeb_id="f1"))
 
     questions_data = [
         ("q1", "t1", "Budget-prioritering", "Hvad synes du er vigtigst, når kommunen skal lægge budget for de næste år?", 1),

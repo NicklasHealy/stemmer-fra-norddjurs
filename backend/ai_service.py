@@ -105,7 +105,7 @@ def generate_analysis(responses_text: list[str], analysis_type: str) -> dict | l
     if not responses_text:
         return None
 
-    sample = responses_text[-50:]
+    sample = responses_text[-100:]  # Begræns til de sidste 100 svar for at holde prompten inden for grænserne
     numbered = "\n".join(f"{i+1}. {s}" for i, s in enumerate(sample))
 
     system_prompts = {

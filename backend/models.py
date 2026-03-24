@@ -15,6 +15,33 @@ def new_uuid():
     return str(uuid.uuid4())
 
 
+class Forloeb(Base):
+    """Forløb (projekt) — det øverste lag i hierarkiet over temaer/spørgsmål."""
+    __tablename__ = "forloeb"
+
+    id = Column(String, primary_key=True, default=new_uuid)
+    title = Column(String(200), nullable=False)
+    description = Column(Text, nullable=True)
+    slug = Column(String(100), unique=True, nullable=False)
+    mode = Column(String(20), default="themes")          # 'themes' | 'questions'
+    allow_citizen_questions = Column(Boolean, default=False)
+    citizen_question_requires_approval = Column(Boolean, default=True)
+    is_active = Column(Boolean, default=True)
+    start_date = Column(DateTime, nullable=True)
+    end_date = Column(DateTime, nullable=True)
+    sort_order = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    themes = relationship("Theme", back_populates="forloeb")
+    direct_questions = relationship(
+        "Question",
+        primaryjoin="Question.forloeb_id == Forloeb.id",
+        foreign_keys="[Question.forloeb_id]",
+        back_populates="forloeb",
+    )
+
+
 class Theme(Base):
     __tablename__ = "themes"
 
@@ -22,27 +49,36 @@ class Theme(Base):
     name = Column(String(200), nullable=False)
     icon = Column(String(10), default="📋")
     sort_order = Column(Integer, default=0)
+    forloeb_id = Column(String, ForeignKey("forloeb.id"), nullable=True)   # nyt
     created_at = Column(DateTime, default=datetime.utcnow)
 
     questions = relationship("Question", back_populates="theme")
+    forloeb = relationship("Forloeb", back_populates="themes")
 
 
 class Question(Base):
     __tablename__ = "questions"
 
     id = Column(String, primary_key=True, default=new_uuid)
-    theme_id = Column(String, ForeignKey("themes.id"), nullable=False)
+    theme_id = Column(String, ForeignKey("themes.id"), nullable=True)      # nullable nu
+    forloeb_id = Column(String, ForeignKey("forloeb.id"), nullable=True)   # nyt — bruges i questions-mode
     title = Column(String(300), nullable=False)
     body = Column(Text, nullable=False)
     is_active = Column(Boolean, default=True)
     allow_followup = Column(Boolean, default=True)
     followup_prompt = Column(Text, default="")
     sort_order = Column(Integer, default=0)
+    is_citizen_submitted = Column(Boolean, default=False)                   # nyt
+    submitted_by_citizen_id = Column(String, ForeignKey("citizens.id", ondelete="SET NULL"), nullable=True)  # nyt
+    is_approved = Column(Boolean, default=True)                            # nyt — godkendelsesstatus for borgerspørgsmål
+    is_anonymous = Column(Boolean, default=False)                          # nyt — borger ønsker anonymitet
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     theme = relationship("Theme", back_populates="questions")
+    forloeb = relationship("Forloeb", foreign_keys=[forloeb_id], back_populates="direct_questions")
     responses = relationship("Response", back_populates="question")
+    submitted_by = relationship("Citizen", foreign_keys=[submitted_by_citizen_id])
 
 
 class Citizen(Base):
