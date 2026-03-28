@@ -12,7 +12,13 @@
       "Bash(python -c \"import ast; ast.parse\\(open\\(''models.py'', encoding=''utf-8''\\).read\\(\\)\\); print\\(''models.py OK''\\)\")",
       "Bash(python -c \"import ast; [print\\(f+'' OK''\\) for f in [''models.py'',''database.py'',''main.py''] if not ast.parse\\(open\\(f,encoding=''utf-8''\\).read\\(\\)\\)]\")",
       "Bash(python -c \":*)",
-      "Bash(node -e \":*)"
+      "Bash(node -e \":*)",
+      "Bash(gh project:*)",
+      "WebFetch(domain:github.com)",
+      "Bash(npm run:*)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\(''main.py''\\).read\\(\\)\\); print\\(''OK''\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\(''email_service.py''\\).read\\(\\)\\); print\\(''OK''\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\(''email_service.py'', encoding=''utf-8''\\).read\\(\\)\\); print\\(''email_service.py OK''\\)\")"
     ]
   }
 }

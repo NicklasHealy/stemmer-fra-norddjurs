@@ -26,6 +26,8 @@ class Forloeb(Base):
     mode = Column(String(20), default="themes")          # 'themes' | 'questions'
     allow_citizen_questions = Column(Boolean, default=False)
     citizen_question_requires_approval = Column(Boolean, default=True)
+    status = Column(String(20), default="draft")     # 'draft' | 'published'
+    image_url = Column(String(500), nullable=True)
     is_active = Column(Boolean, default=True)
     start_date = Column(DateTime, nullable=True)
     end_date = Column(DateTime, nullable=True)

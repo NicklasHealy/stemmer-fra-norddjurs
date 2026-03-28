@@ -91,6 +91,22 @@ def migrate_db():
             migrations.append("ALTER TABLE citizens ADD temp_password_expires DATETIME NULL")
 
     # ── Forløb-migrationer ──────────────────────────────────────────
+    # forloeb: status og image_url
+    try:
+        forloeb_cols = {col["name"] for col in inspector.get_columns("forloeb")}
+        if "status" not in forloeb_cols:
+            if is_sqlite:
+                migrations.append("ALTER TABLE forloeb ADD COLUMN status VARCHAR(20) NOT NULL DEFAULT 'published'")
+            else:
+                migrations.append("ALTER TABLE forloeb ADD status VARCHAR(20) NOT NULL DEFAULT 'published'")
+        if "image_url" not in forloeb_cols:
+            if is_sqlite:
+                migrations.append("ALTER TABLE forloeb ADD COLUMN image_url VARCHAR(500) NULL")
+            else:
+                migrations.append("ALTER TABLE forloeb ADD image_url VARCHAR(500) NULL")
+    except Exception:
+        pass
+
     # themes.forloeb_id
     try:
         themes_cols = {col["name"] for col in inspector.get_columns("themes")}

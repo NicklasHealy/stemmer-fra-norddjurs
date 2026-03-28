@@ -777,16 +777,21 @@ const CitizenFlow = ({ onAdminClick }) => {
                 }
                 // themes-mode: bliv på step 1, vis temaer nedenfor
               }}
-                style={{ padding: "22px 20px", borderRadius: 16, border: "2px solid var(--border)", background: "var(--card)", cursor: "pointer", textAlign: "left", transition: "all 0.2s" }}
+                style={{ padding: 0, borderRadius: 16, border: "2px solid var(--border)", background: "var(--card)", cursor: "pointer", textAlign: "left", transition: "all 0.2s", overflow: "hidden" }}
                 onMouseEnter={e => { e.currentTarget.style.borderColor = "var(--primary)"; e.currentTarget.style.background = "var(--primary-pale)"; }}
                 onMouseLeave={e => { e.currentTarget.style.borderColor = "var(--border)"; e.currentTarget.style.background = "var(--card)"; }}
               >
-                <div style={{ fontWeight: 700, fontSize: 17, fontFamily: "DM Sans", marginBottom: 6 }}>{f.title}</div>
-                {f.description && <div style={{ fontSize: 14, color: "var(--muted)", lineHeight: 1.5, marginBottom: 8 }}>{f.description}</div>}
-                <div style={{ fontSize: 12, color: "var(--primary)", fontWeight: 500 }}>
-                  {f.mode === "themes"
-                    ? `${(f.themes || []).length} temaer`
-                    : `${f.question_count || 0} spørgsmål`}
+                {f.image_url && (
+                  <div style={{ width: "100%", height: 140, backgroundImage: `url(${f.image_url})`, backgroundSize: "cover", backgroundPosition: "center" }} />
+                )}
+                <div style={{ padding: "16px 20px" }}>
+                  <div style={{ fontWeight: 700, fontSize: 17, fontFamily: "DM Sans", marginBottom: 6 }}>{f.title}</div>
+                  {f.description && <div style={{ fontSize: 14, color: "var(--muted)", lineHeight: 1.5, marginBottom: 8 }}>{f.description}</div>}
+                  <div style={{ fontSize: 12, color: "var(--primary)", fontWeight: 500 }}>
+                    {f.mode === "themes"
+                      ? `${(f.themes || []).length} temaer`
+                      : `${f.question_count || 0} spørgsmål`}
+                  </div>
                 </div>
               </button>
             ))}
@@ -810,6 +815,9 @@ const CitizenFlow = ({ onAdminClick }) => {
     return (
       <div style={cs} className="fade-in">
         <TopBar onBack={backFromThemes} backLabel={forloeb.length > 1 ? "Skift forløb" : "Tilbage"} />
+        {selectedForloeb.image_url && (
+          <div style={{ width: "100%", height: 120, backgroundImage: `url(${selectedForloeb.image_url})`, backgroundSize: "cover", backgroundPosition: "center", borderRadius: 14, marginBottom: 16 }} />
+        )}
         <div style={{ background: "var(--primary-pale)", borderRadius: 12, padding: "8px 14px", display: "inline-flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
           <span style={{ fontSize: 13, fontWeight: 600, color: "var(--primary)" }}>📋 {selectedForloeb.title}</span>
         </div>
@@ -1554,10 +1562,25 @@ const AdminPanel = ({ adminToken, onLogout }) => {
   const [citizenResults, setCitizenResults] = useState([]);
   const [resetResult, setResetResult] = useState(null); // { email, temp_password, expires_at }
   const [forloebList, setForloebList] = useState([]);
-  const [editingForloeb, setEditingForloeb] = useState(null); // null | 'new' | { ...forloeb }
-  const [newForloebData, setNewForloebData] = useState({ title: "", description: "", slug: "", mode: "themes", allow_citizen_questions: false, citizen_question_requires_approval: true, is_active: true, sort_order: 0 });
   const [pendingQuestions, setPendingQuestions] = useState([]);
   const [pendingForloebId, setPendingForloebId] = useState(null);
+
+  // ── Forløb wizard ──
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const [wizardStep, setWizardStep] = useState(1);
+  const [wizardForloebId, setWizardForloebId] = useState(null);
+  const [wizardData, setWizardData] = useState({ title: "", description: "", slug: "", image_url: "", mode: "themes", start_date: "", end_date: "", allow_citizen_questions: false, citizen_question_requires_approval: true, is_active: true, sort_order: 0 });
+  const [wizardThemes, setWizardThemes] = useState([]);       // temaer tilknyttet dette forløb (sorteret)
+  const [wizardDirectQs, setWizardDirectQs] = useState([]);   // spørgsmål i questions-mode
+  const [wizardQsByTheme, setWizardQsByTheme] = useState({}); // { themeId: [question,...] } i themes-mode
+  const [wizardSaveStatus, setWizardSaveStatus] = useState("idle"); // idle | saving | saved | error
+  const [wizardDrag, setWizardDrag] = useState(null); // { list: 'themes'|themeId|'direct', idx: number }
+  const [forkDialog, setForkDialog] = useState(null); // { question, targetThemeId, targetForloebId, resolve }
+  const [wizardNewTheme, setWizardNewTheme] = useState({ name: "", icon: "📋" });
+  const [wizardNewQ, setWizardNewQ] = useState({ title: "", body: "", allow_followup: true, followup_prompt: "" });
+  const [wizardNewQTheme, setWizardNewQTheme] = useState("");  // theme_id for new question in themes mode
+  const [wizardEditQ, setWizardEditQ] = useState(null); // question being edited inline
+  const autoSaveRef = useRef(null);
 
   const adminFetch = (path, options = {}) => apiFetch(path, options, adminToken);
 
@@ -1863,257 +1886,615 @@ const AdminPanel = ({ adminToken, onLogout }) => {
         )}
 
         {/* ── Forløb Tab ── */}
-        {tab === "forloeb" && (
-          <div className="fade-in">
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
-              <h1 style={{ fontSize: 28, fontWeight: 700 }}>Forløb</h1>
-              <button
-                onClick={() => { setEditingForloeb("new"); setNewForloebData({ title: "", description: "", slug: "", mode: "themes", allow_citizen_questions: false, citizen_question_requires_approval: true, is_active: true, sort_order: 0 }); }}
-                style={{ padding: "10px 20px", borderRadius: 10, border: "none", background: "var(--primary)", color: "#fff", cursor: "pointer", fontFamily: "DM Sans", fontSize: 14, fontWeight: 600 }}
-              >+ Nyt forløb</button>
-            </div>
+        {tab === "forloeb" && (() => {
+          const slugify = s => s.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-æøåÆØÅ]/g, "").replace(/-+/g, "-");
 
-            {/* Opret/rediger forløb */}
-            {editingForloeb && (
-              <div style={{ background: "var(--card)", borderRadius: 16, padding: 24, border: "1px solid var(--primary)", marginBottom: 24 }}>
-                <h3 style={{ fontSize: 17, fontWeight: 700, marginBottom: 16 }}>
-                  {editingForloeb === "new" ? "Opret nyt forløb" : `Rediger: ${editingForloeb.title}`}
-                </h3>
-                {[
-                  { label: "Titel", key: "title", type: "text", placeholder: "F.eks. Budget 2027" },
-                  { label: "URL-navn (slug)", key: "slug", type: "text", placeholder: "f.eks. budget-2027" },
-                ].map(({ label, key, type, placeholder }) => (
-                  <div key={key} style={{ marginBottom: 14 }}>
-                    <label style={{ display: "block", fontSize: 13, fontWeight: 600, marginBottom: 4 }}>{label}</label>
-                    <input
-                      type={type}
-                      value={editingForloeb === "new" ? newForloebData[key] : editingForloeb[key] || ""}
-                      onChange={e => {
-                        const val = e.target.value;
-                        if (editingForloeb === "new") setNewForloebData(p => ({ ...p, [key]: val }));
-                        else setEditingForloeb(p => ({ ...p, [key]: val }));
-                      }}
-                      placeholder={placeholder}
-                      style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid var(--border)", fontSize: 15 }}
-                    />
-                  </div>
-                ))}
-                <div style={{ marginBottom: 14 }}>
-                  <label style={{ display: "block", fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Beskrivelse</label>
-                  <textarea
-                    value={editingForloeb === "new" ? newForloebData.description || "" : editingForloeb.description || ""}
-                    onChange={e => {
-                      const val = e.target.value;
-                      if (editingForloeb === "new") setNewForloebData(p => ({ ...p, description: val }));
-                      else setEditingForloeb(p => ({ ...p, description: val }));
-                    }}
-                    placeholder="Kort beskrivelse til borgeren..."
-                    style={{ width: "100%", minHeight: 70, padding: "10px 14px", borderRadius: 10, border: "1px solid var(--border)", fontSize: 15, resize: "vertical" }}
-                  />
-                </div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 14 }}>
-                  <div>
-                    <label style={{ display: "block", fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Tilstand</label>
-                    <select
-                      value={editingForloeb === "new" ? newForloebData.mode : editingForloeb.mode}
-                      onChange={e => {
-                        const val = e.target.value;
-                        if (editingForloeb === "new") setNewForloebData(p => ({ ...p, mode: val }));
-                        else setEditingForloeb(p => ({ ...p, mode: val }));
-                      }}
-                      style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid var(--border)", fontSize: 15 }}
-                    >
-                      <option value="themes">Temaer</option>
-                      <option value="questions">Spørgsmål (direkte)</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label style={{ display: "block", fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Status</label>
-                    <select
-                      value={editingForloeb === "new" ? String(newForloebData.is_active) : String(editingForloeb.is_active)}
-                      onChange={e => {
-                        const val = e.target.value === "true";
-                        if (editingForloeb === "new") setNewForloebData(p => ({ ...p, is_active: val }));
-                        else setEditingForloeb(p => ({ ...p, is_active: val }));
-                      }}
-                      style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid var(--border)", fontSize: 15 }}
-                    >
-                      <option value="true">Aktivt</option>
-                      <option value="false">Inaktivt</option>
-                    </select>
-                  </div>
-                </div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 20 }}>
-                  <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
-                    <input
-                      type="checkbox"
-                      checked={editingForloeb === "new" ? newForloebData.allow_citizen_questions : editingForloeb.allow_citizen_questions}
-                      onChange={e => {
-                        const val = e.target.checked;
-                        if (editingForloeb === "new") setNewForloebData(p => ({ ...p, allow_citizen_questions: val }));
-                        else setEditingForloeb(p => ({ ...p, allow_citizen_questions: val }));
-                      }}
-                    />
-                    <span style={{ fontSize: 13 }}>Borgere kan stille spørgsmål</span>
-                  </label>
-                  <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
-                    <input
-                      type="checkbox"
-                      checked={editingForloeb === "new" ? newForloebData.citizen_question_requires_approval : editingForloeb.citizen_question_requires_approval}
-                      onChange={e => {
-                        const val = e.target.checked;
-                        if (editingForloeb === "new") setNewForloebData(p => ({ ...p, citizen_question_requires_approval: val }));
-                        else setEditingForloeb(p => ({ ...p, citizen_question_requires_approval: val }));
-                      }}
-                    />
-                    <span style={{ fontSize: 13 }}>Borgerspørgsmål kræver godkendelse</span>
-                  </label>
-                </div>
-                <div style={{ display: "flex", gap: 12 }}>
-                  <button
-                    onClick={async () => {
-                      const payload = editingForloeb === "new" ? newForloebData : editingForloeb;
-                      const method = editingForloeb === "new" ? "POST" : "PUT";
-                      const url = editingForloeb === "new" ? "/api/admin/forloeb" : `/api/admin/forloeb/${editingForloeb.id}`;
-                      const res = await adminFetch(url, { method, body: JSON.stringify(payload) });
-                      if (res.ok) {
-                        const updated = await adminFetch("/api/admin/forloeb").then(r => r.ok ? r.json() : []);
-                        setForloebList(updated);
-                        setEditingForloeb(null);
-                      }
-                    }}
-                    style={{ padding: "10px 24px", borderRadius: 10, border: "none", background: "var(--primary)", color: "#fff", cursor: "pointer", fontFamily: "DM Sans", fontSize: 14, fontWeight: 600 }}
-                  >{editingForloeb === "new" ? "Opret forløb" : "Gem ændringer"}</button>
-                  <button onClick={() => setEditingForloeb(null)} style={{ padding: "10px 20px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--card)", cursor: "pointer", fontFamily: "DM Sans", fontSize: 14 }}>Annuller</button>
-                </div>
-              </div>
-            )}
+          const openWizard = async (forloeb) => {
+            if (forloeb) {
+              setWizardForloebId(forloeb.id);
+              setWizardData({
+                title: forloeb.title || "", description: forloeb.description || "",
+                slug: forloeb.slug || "", image_url: forloeb.image_url || "",
+                mode: forloeb.mode || "themes", start_date: forloeb.start_date ? forloeb.start_date.slice(0,10) : "",
+                end_date: forloeb.end_date ? forloeb.end_date.slice(0,10) : "",
+                allow_citizen_questions: forloeb.allow_citizen_questions || false,
+                citizen_question_requires_approval: forloeb.citizen_question_requires_approval !== false,
+                is_active: forloeb.is_active !== false, sort_order: forloeb.sort_order || 0,
+              });
+              // Load temaer og spørgsmål til wizard
+              const allThemes = themes.filter(t => t.forloeb_id === forloeb.id).sort((a,b) => a.sort_order - b.sort_order);
+              setWizardThemes(allThemes);
+              if (forloeb.mode === "questions") {
+                const qs = questions.filter(q => q.forloeb_id === forloeb.id).sort((a,b) => a.sort_order - b.sort_order);
+                setWizardDirectQs(qs);
+              } else {
+                const byTheme = {};
+                allThemes.forEach(t => {
+                  byTheme[t.id] = questions.filter(q => q.theme_id === t.id).sort((a,b) => a.sort_order - b.sort_order);
+                });
+                setWizardQsByTheme(byTheme);
+              }
+            } else {
+              setWizardForloebId(null);
+              setWizardData({ title: "", description: "", slug: "", image_url: "", mode: "themes", start_date: "", end_date: "", allow_citizen_questions: false, citizen_question_requires_approval: true, is_active: true, sort_order: 0 });
+              setWizardThemes([]); setWizardDirectQs([]); setWizardQsByTheme({});
+            }
+            setWizardStep(1); setWizardSaveStatus("idle"); setWizardEditQ(null);
+            setWizardNewTheme({ name: "", icon: "📋" });
+            setWizardNewQ({ title: "", body: "", allow_followup: true, followup_prompt: "" });
+            setWizardOpen(true);
+          };
 
-            {/* Liste over forløb */}
-            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-              {forloebList.length === 0 && <p style={{ color: "var(--muted)", fontSize: 14 }}>Ingen forløb oprettet endnu.</p>}
-              {forloebList.map(f => (
-                <div key={f.id} style={{ background: "var(--card)", borderRadius: 16, padding: 20, border: "1px solid var(--border)" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
+          const closeWizard = async () => {
+            setWizardOpen(false);
+            const updated = await adminFetch("/api/admin/forloeb").then(r => r.ok ? r.json() : []);
+            setForloebList(updated);
+            const updatedThemes = await fetch(`${API_BASE}/api/themes`).then(r => r.json()).catch(() => themes);
+            setThemes(updatedThemes);
+            const updatedQs = await adminFetch("/api/admin/questions").then(r => r.ok ? r.json() : questions);
+            setQuestions(updatedQs);
+          };
+
+          const autoSave = (data) => {
+            if (!wizardForloebId) return;
+            clearTimeout(autoSaveRef.current);
+            setWizardSaveStatus("saving");
+            autoSaveRef.current = setTimeout(async () => {
+              const res = await adminFetch(`/api/admin/forloeb/${wizardForloebId}`, { method: "PUT", body: JSON.stringify(data) });
+              setWizardSaveStatus(res.ok ? "saved" : "error");
+              setTimeout(() => setWizardSaveStatus("idle"), 2000);
+            }, 1500);
+          };
+
+          const updateWizardData = (key, val) => {
+            const next = { ...wizardData, [key]: val };
+            if (key === "title" && !wizardForloebId) next.slug = slugify(val);
+            setWizardData(next);
+            if (wizardForloebId) autoSave(next);
+          };
+
+          const wizardSaveStep1 = async () => {
+            setWizardSaveStatus("saving");
+            const payload = { ...wizardData };
+            if (!payload.slug) payload.slug = slugify(payload.title);
+            if (!payload.start_date) delete payload.start_date;
+            if (!payload.end_date) delete payload.end_date;
+            if (wizardForloebId) {
+              const res = await adminFetch(`/api/admin/forloeb/${wizardForloebId}`, { method: "PUT", body: JSON.stringify(payload) });
+              if (!res.ok) { setWizardSaveStatus("error"); return false; }
+            } else {
+              const res = await adminFetch("/api/admin/forloeb", { method: "POST", body: JSON.stringify({ ...payload, status: "draft" }) });
+              if (!res.ok) { setWizardSaveStatus("error"); return false; }
+              const created = await res.json();
+              setWizardForloebId(created.id);
+            }
+            setWizardSaveStatus("saved");
+            setTimeout(() => setWizardSaveStatus("idle"), 2000);
+            return true;
+          };
+
+          const saveThemesOrder = async (list) => {
+            if (!wizardForloebId) return;
+            const items = list.map((t, i) => ({ id: t.id, sort_order: i }));
+            await adminFetch(`/api/admin/forloeb/${wizardForloebId}/reorder-themes`, { method: "PUT", body: JSON.stringify(items) });
+          };
+
+          const saveQuestionsOrder = async (list, forloebId) => {
+            if (!forloebId) return;
+            const items = list.map((q, i) => ({ id: q.id, sort_order: i }));
+            await adminFetch(`/api/admin/forloeb/${forloebId}/reorder-questions`, { method: "PUT", body: JSON.stringify(items) });
+          };
+
+          const reorderList = (list, from, to) => {
+            const next = [...list];
+            const [item] = next.splice(from, 1);
+            next.splice(to, 0, item);
+            return next;
+          };
+
+          const wizardPublish = async () => {
+            if (!wizardData.title.trim()) { alert("Forløbet skal have en titel."); return; }
+            if (!wizardData.description.trim()) { alert("Forløbet skal have en beskrivelse."); return; }
+            const totalQs = wizardData.mode === "questions"
+              ? wizardDirectQs.length
+              : Object.values(wizardQsByTheme).flat().length;
+            if (totalQs === 0) { alert("Forløbet skal have mindst ét spørgsmål."); return; }
+            const res = await adminFetch(`/api/admin/forloeb/${wizardForloebId}/publish`, { method: "PUT" });
+            if (res.ok) { await closeWizard(); }
+            else { const err = await res.json().catch(() => ({})); alert(err.detail || "Kunne ikke publicere"); }
+          };
+
+          // Drag helpers
+          const onDragStart = (list, idx) => setWizardDrag({ list, idx });
+          const onDragOver = e => e.preventDefault();
+          const onDropTheme = async (toIdx) => {
+            if (!wizardDrag || wizardDrag.list !== "themes") return;
+            const next = reorderList(wizardThemes, wizardDrag.idx, toIdx);
+            setWizardThemes(next); setWizardDrag(null);
+            await saveThemesOrder(next);
+          };
+          const onDropQ = async (themeKey, toIdx) => {
+            if (!wizardDrag || wizardDrag.list !== themeKey) return;
+            if (themeKey === "direct") {
+              const next = reorderList(wizardDirectQs, wizardDrag.idx, toIdx);
+              setWizardDirectQs(next); setWizardDrag(null);
+              await saveQuestionsOrder(next, wizardForloebId);
+            } else {
+              const next = reorderList(wizardQsByTheme[themeKey] || [], wizardDrag.idx, toIdx);
+              setWizardQsByTheme(p => ({ ...p, [themeKey]: next })); setWizardDrag(null);
+              await saveQuestionsOrder(next, wizardForloebId);
+            }
+          };
+
+          const addExistingTheme = async (themeId) => {
+            if (!themeId || !wizardForloebId) return;
+            const res = await adminFetch(`/api/admin/themes/${themeId}/forloeb?forloeb_id=${wizardForloebId}`, { method: "PUT" });
+            if (res.ok) {
+              const t = themes.find(x => x.id === themeId);
+              if (t) {
+                const next = [...wizardThemes, { ...t, forloeb_id: wizardForloebId }];
+                setWizardThemes(next);
+                setWizardQsByTheme(p => ({ ...p, [themeId]: questions.filter(q => q.theme_id === themeId).sort((a,b) => a.sort_order - b.sort_order) }));
+              }
+            }
+          };
+
+          const createThemeInWizard = async () => {
+            if (!wizardNewTheme.name.trim() || !wizardForloebId) return;
+            const res = await adminFetch("/api/admin/themes", { method: "POST", body: JSON.stringify({ ...wizardNewTheme, sort_order: wizardThemes.length }) });
+            if (res.ok) {
+              const newT = await res.json();
+              await adminFetch(`/api/admin/themes/${newT.id}/forloeb?forloeb_id=${wizardForloebId}`, { method: "PUT" });
+              setWizardThemes(p => [...p, { ...newT, forloeb_id: wizardForloebId }]);
+              setWizardQsByTheme(p => ({ ...p, [newT.id]: [] }));
+              setWizardNewTheme({ name: "", icon: "📋" });
+              const updatedThemes = await fetch(`${API_BASE}/api/themes`).then(r => r.json()).catch(() => themes);
+              setThemes(updatedThemes);
+            }
+          };
+
+          const removeThemeFromWizard = async (themeId) => {
+            const res = await adminFetch(`/api/admin/themes/${themeId}/forloeb?forloeb_id=`, { method: "PUT" });
+            if (res.ok) {
+              setWizardThemes(p => p.filter(t => t.id !== themeId));
+              setWizardQsByTheme(p => { const next = { ...p }; delete next[themeId]; return next; });
+            }
+          };
+
+          const addQuestionToWizard = async (themeId) => {
+            const q = wizardNewQ;
+            if (!q.title.trim() || !q.body.trim()) return;
+            const payload = { title: q.title, body: q.body, allow_followup: q.allow_followup, followup_prompt: q.followup_prompt, is_active: true, sort_order: 99,
+              ...(themeId ? { theme_id: themeId, forloeb_id: null } : { theme_id: null, forloeb_id: wizardForloebId })
+            };
+            const res = await adminFetch("/api/admin/questions", { method: "POST", body: JSON.stringify(payload) });
+            if (res.ok) {
+              const newQ = await res.json();
+              if (themeId) setWizardQsByTheme(p => ({ ...p, [themeId]: [...(p[themeId] || []), newQ] }));
+              else setWizardDirectQs(p => [...p, newQ]);
+              setWizardNewQ({ title: "", body: "", allow_followup: true, followup_prompt: "" });
+              setWizardNewQTheme("");
+              const updatedQs = await adminFetch("/api/admin/questions").then(r => r.ok ? r.json() : questions);
+              setQuestions(updatedQs);
+            }
+          };
+
+          const startForkOrEdit = async (question, themeId) => {
+            // Tjek om spørgsmålet tilhører eksklusivt dette forløbs tema
+            const theme = themes.find(t => t.id === question.theme_id);
+            const isShared = theme && theme.forloeb_id !== wizardForloebId;
+            if (isShared || (!theme && question.forloeb_id && question.forloeb_id !== wizardForloebId)) {
+              setForkDialog({ question, themeId, resolve: async (fork) => {
+                setForkDialog(null);
+                if (fork) {
+                  const res = await adminFetch(`/api/admin/questions/${question.id}/fork`, { method: "POST", body: JSON.stringify(themeId ? { theme_id: themeId } : { forloeb_id: wizardForloebId }) });
+                  if (res.ok) {
+                    const newQ = await res.json();
+                    if (themeId) setWizardQsByTheme(p => ({ ...p, [themeId]: (p[themeId] || []).map(q => q.id === question.id ? newQ : q) }));
+                    else setWizardDirectQs(p => p.map(q => q.id === question.id ? newQ : q));
+                    setWizardEditQ(newQ);
+                  }
+                } else setWizardEditQ(question);
+              }});
+            } else setWizardEditQ({ ...question });
+          };
+
+          const saveEditedQ = async () => {
+            if (!wizardEditQ) return;
+            const res = await adminFetch(`/api/admin/questions/${wizardEditQ.id}`, { method: "PUT", body: JSON.stringify(wizardEditQ) });
+            if (res.ok) {
+              const updated = await res.json();
+              const tid = updated.theme_id;
+              if (tid) setWizardQsByTheme(p => ({ ...p, [tid]: (p[tid] || []).map(q => q.id === updated.id ? updated : q) }));
+              else setWizardDirectQs(p => p.map(q => q.id === updated.id ? updated : q));
+              setWizardEditQ(null);
+            }
+          };
+
+          const removeQFromWizard = async (question, themeId) => {
+            if (!confirm("Fjern dette spørgsmål fra forløbet?")) return;
+            if (themeId) {
+              setWizardQsByTheme(p => ({ ...p, [themeId]: (p[themeId] || []).filter(q => q.id !== question.id) }));
+              await adminFetch(`/api/admin/questions/${question.id}`, { method: "PUT", body: JSON.stringify({ theme_id: null }) });
+            } else {
+              setWizardDirectQs(p => p.filter(q => q.id !== question.id));
+              await adminFetch(`/api/admin/questions/${question.id}`, { method: "PUT", body: JSON.stringify({ forloeb_id: null }) });
+            }
+          };
+
+          const totalSteps = wizardData.mode === "themes" ? 3 : 2;
+          const inputS = { width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid var(--border)", fontSize: 15, fontFamily: "DM Sans", boxSizing: "border-box" };
+          const labelS = { display: "block", fontSize: 13, fontWeight: 600, marginBottom: 4 };
+          const dragHandleS = { cursor: "grab", color: "var(--muted)", marginRight: 8, fontSize: 16, userSelect: "none" };
+
+          return (
+            <div className="fade-in">
+              {/* Fork-dialog */}
+              {forkDialog && (
+                <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+                  <div style={{ background: "var(--card)", borderRadius: 16, padding: 28, maxWidth: 440, width: "100%", boxShadow: "0 8px 40px rgba(0,0,0,0.2)" }}>
+                    <h3 style={{ fontSize: 17, fontWeight: 700, marginBottom: 12 }}>Delt spørgsmål</h3>
+                    <p style={{ fontSize: 14, color: "var(--muted)", marginBottom: 20, lineHeight: 1.6 }}>
+                      Dette spørgsmål bruges i andre forløb. Vil du ændre det for <strong>alle forløb</strong>, eller oprette en <strong>kopi kun for dette forløb</strong>?
+                    </p>
+                    <div style={{ display: "flex", gap: 10 }}>
+                      <button onClick={() => forkDialog.resolve(false)} style={{ flex: 1, padding: "10px 16px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--bg)", cursor: "pointer", fontFamily: "DM Sans", fontSize: 14 }}>Ændr alle forløb</button>
+                      <button onClick={() => forkDialog.resolve(true)} style={{ flex: 1, padding: "10px 16px", borderRadius: 10, border: "none", background: "var(--primary)", color: "#fff", cursor: "pointer", fontFamily: "DM Sans", fontSize: 14, fontWeight: 600 }}>Opret kopi</button>
+                    </div>
+                    <button onClick={() => setForkDialog(null)} style={{ marginTop: 10, width: "100%", padding: "8px", borderRadius: 10, border: "1px solid var(--border)", background: "transparent", cursor: "pointer", fontFamily: "DM Sans", fontSize: 13, color: "var(--muted)" }}>Annuller</button>
+                  </div>
+                </div>
+              )}
+
+              {wizardOpen ? (
+                <div>
+                  {/* Wizard header */}
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
                     <div>
-                      <h3 style={{ fontSize: 17, fontWeight: 700, marginBottom: 2 }}>{f.title}</h3>
-                      <div style={{ fontSize: 13, color: "var(--muted)" }}>
-                        /{f.slug} · {f.mode === "themes" ? "Temaer" : "Direkte spørgsmål"} · {f.is_active ? "✅ Aktivt" : "⏸ Inaktivt"}
+                      <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 4 }}>{wizardForloebId ? "Rediger forløb" : "Nyt forløb"}</h1>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        {wizardSaveStatus === "saving" && <span style={{ fontSize: 12, color: "var(--muted)" }}>Gemmer kladde…</span>}
+                        {wizardSaveStatus === "saved" && <span style={{ fontSize: 12, color: "green" }}>✓ Gemt</span>}
+                        {wizardSaveStatus === "error" && <span style={{ fontSize: 12, color: "var(--danger)" }}>Fejl ved gem</span>}
                       </div>
                     </div>
-                    <div style={{ display: "flex", gap: 8 }}>
-                      <button onClick={() => setEditingForloeb({ ...f })} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--bg)", cursor: "pointer", fontFamily: "DM Sans", fontSize: 13 }}>Rediger</button>
-                      <button
-                        onClick={async () => {
-                          if (!confirm(`Slet forløbet "${f.title}"?`)) return;
-                          await adminFetch(`/api/admin/forloeb/${f.id}`, { method: "DELETE" });
-                          setForloebList(prev => prev.filter(x => x.id !== f.id));
-                        }}
-                        style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--bg)", cursor: "pointer", fontFamily: "DM Sans", fontSize: 13, color: "var(--danger)" }}
-                      >Slet</button>
-                    </div>
+                    <button onClick={closeWizard} style={{ padding: "8px 16px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--bg)", cursor: "pointer", fontFamily: "DM Sans", fontSize: 13 }}>✕ Luk</button>
                   </div>
-                  {f.description && <p style={{ fontSize: 14, color: "var(--muted)", marginBottom: 12, lineHeight: 1.5 }}>{f.description}</p>}
 
-                  {/* Tilknyttet indhold */}
-                  {f.mode === "themes" && f.themes && (
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: f.allow_citizen_questions ? 12 : 0 }}>
-                      {f.themes.map(t => (
-                        <span key={t.id} style={{ fontSize: 12, padding: "3px 10px", borderRadius: 20, background: "var(--primary-pale)", color: "var(--primary)", border: "1px solid var(--primary)" }}>
-                          {t.icon} {t.name} ({t.question_count} spørgsmål)
-                        </span>
-                      ))}
+                  {/* Progress bar */}
+                  <div style={{ display: "flex", gap: 4, marginBottom: 28 }}>
+                    {Array.from({ length: totalSteps }, (_, i) => (
+                      <div key={i} style={{ flex: 1, height: 4, borderRadius: 4, background: i < wizardStep ? "var(--primary)" : "var(--border)", transition: "background 0.3s" }} />
+                    ))}
+                  </div>
+                  <div style={{ display: "flex", gap: 16, marginBottom: 24 }}>
+                    {[
+                      { n: 1, label: "Indstillinger" },
+                      ...(wizardData.mode === "themes" ? [{ n: 2, label: "Temaer" }, { n: 3, label: "Spørgsmål" }] : [{ n: 2, label: "Spørgsmål" }]),
+                    ].map(({ n, label }) => (
+                      <div key={n} style={{ display: "flex", alignItems: "center", gap: 6, opacity: n > wizardStep ? 0.4 : 1 }}>
+                        <div style={{ width: 24, height: 24, borderRadius: "50%", background: n === wizardStep ? "var(--primary)" : n < wizardStep ? "var(--primary)" : "var(--border)", color: n <= wizardStep ? "#fff" : "var(--muted)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 700 }}>{n < wizardStep ? "✓" : n}</div>
+                        <span style={{ fontSize: 13, fontWeight: n === wizardStep ? 700 : 400, color: n === wizardStep ? "var(--primary)" : "var(--muted)" }}>{label}</span>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* ─── Trin 1: Indstillinger ─── */}
+                  {wizardStep === 1 && (
+                    <div style={{ background: "var(--card)", borderRadius: 16, padding: 24, border: "1px solid var(--border)", marginBottom: 24 }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
+                        <div>
+                          <label style={labelS}>Titel *</label>
+                          <input style={inputS} value={wizardData.title} onChange={e => updateWizardData("title", e.target.value)} placeholder="F.eks. Budget 2027" />
+                        </div>
+                        <div>
+                          <label style={labelS}>URL-navn (slug)</label>
+                          <input style={inputS} value={wizardData.slug} onChange={e => updateWizardData("slug", e.target.value)} placeholder="budget-2027" />
+                        </div>
+                      </div>
+                      <div style={{ marginBottom: 16 }}>
+                        <label style={labelS}>Beskrivelse *</label>
+                        <textarea style={{ ...inputS, minHeight: 80, resize: "vertical" }} value={wizardData.description} onChange={e => updateWizardData("description", e.target.value)} placeholder="Kort beskrivelse til borgeren…" />
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
+                        <div>
+                          <label style={labelS}>Startdato</label>
+                          <input type="date" style={inputS} value={wizardData.start_date} onChange={e => updateWizardData("start_date", e.target.value)} />
+                        </div>
+                        <div>
+                          <label style={labelS}>Slutdato</label>
+                          <input type="date" style={inputS} value={wizardData.end_date} onChange={e => updateWizardData("end_date", e.target.value)} />
+                        </div>
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
+                        <div>
+                          <label style={labelS}>Type</label>
+                          <select style={inputS} value={wizardData.mode} onChange={e => updateWizardData("mode", e.target.value)}>
+                            <option value="themes">Med temaer</option>
+                            <option value="questions">Direkte spørgsmål</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label style={labelS}>Billede-URL (valgfri)</label>
+                          <input style={inputS} value={wizardData.image_url} onChange={e => updateWizardData("image_url", e.target.value)} placeholder="https://…" />
+                        </div>
+                      </div>
+                      <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
+                        <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13 }}>
+                          <input type="checkbox" checked={wizardData.allow_citizen_questions} onChange={e => updateWizardData("allow_citizen_questions", e.target.checked)} />
+                          Borgere kan stille spørgsmål
+                        </label>
+                        <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13 }}>
+                          <input type="checkbox" checked={wizardData.citizen_question_requires_approval} onChange={e => updateWizardData("citizen_question_requires_approval", e.target.checked)} />
+                          Borgerspørgsmål kræver godkendelse
+                        </label>
+                      </div>
                     </div>
                   )}
-                  {f.mode === "questions" && (
-                    <p style={{ fontSize: 13, color: "var(--muted)", marginBottom: f.allow_citizen_questions ? 12 : 0 }}>{f.question_count} aktive spørgsmål</p>
+
+                  {/* ─── Trin 2: Temaer (kun themes-mode) ─── */}
+                  {wizardStep === 2 && wizardData.mode === "themes" && (
+                    <div style={{ marginBottom: 24 }}>
+                      <div style={{ background: "var(--card)", borderRadius: 16, padding: 24, border: "1px solid var(--border)", marginBottom: 16 }}>
+                        <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 4 }}>Temaer i dette forløb</h3>
+                        <p style={{ fontSize: 13, color: "var(--muted)", marginBottom: 16 }}>Træk for at ændre rækkefølge.</p>
+                        {wizardThemes.length === 0 && <p style={{ fontSize: 13, color: "var(--muted)", marginBottom: 12 }}>Ingen temaer tilknyttet endnu.</p>}
+                        {wizardThemes.map((t, i) => (
+                          <div key={t.id} draggable onDragStart={() => onDragStart("themes", i)} onDragOver={onDragOver} onDrop={() => onDropTheme(i)}
+                            style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", background: wizardDrag?.list === "themes" && wizardDrag?.idx === i ? "var(--primary-pale)" : "var(--bg)", borderRadius: 10, marginBottom: 8, border: "1px solid var(--border)", transition: "background 0.15s" }}>
+                            <span style={dragHandleS}>⠿</span>
+                            <span style={{ fontSize: 20 }}>{t.icon}</span>
+                            <span style={{ flex: 1, fontSize: 14, fontWeight: 500 }}>{t.name}</span>
+                            <span style={{ fontSize: 12, color: "var(--muted)" }}>{(wizardQsByTheme[t.id] || []).length} spørgsmål</span>
+                            <button onClick={() => removeThemeFromWizard(t.id)} style={{ padding: "3px 10px", borderRadius: 6, border: "1px solid var(--danger)", background: "transparent", color: "var(--danger)", cursor: "pointer", fontSize: 12, fontFamily: "DM Sans" }}>Fjern</button>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Tilføj eksisterende tema */}
+                      <div style={{ background: "var(--card)", borderRadius: 16, padding: 20, border: "1px solid var(--border)", marginBottom: 12 }}>
+                        <h4 style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>Tilføj eksisterende tema</h4>
+                        <div style={{ display: "flex", gap: 10 }}>
+                          <select style={{ flex: 1, padding: "10px 14px", borderRadius: 10, border: "1px solid var(--border)", fontSize: 14, fontFamily: "DM Sans" }}
+                            onChange={e => { if (e.target.value) { addExistingTheme(e.target.value); e.target.value = ""; } }}>
+                            <option value="">Vælg tema…</option>
+                            {themes.filter(t => !wizardThemes.find(wt => wt.id === t.id)).map(t => (
+                              <option key={t.id} value={t.id}>{t.icon} {t.name}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* Opret nyt tema */}
+                      <div style={{ background: "var(--card)", borderRadius: 16, padding: 20, border: "1px solid var(--border)" }}>
+                        <h4 style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>Opret nyt tema</h4>
+                        <div style={{ display: "flex", gap: 10 }}>
+                          <input value={wizardNewTheme.icon} onChange={e => setWizardNewTheme(p => ({ ...p, icon: e.target.value }))} maxLength={4} placeholder="📋" style={{ width: 56, padding: "10px", borderRadius: 10, border: "1px solid var(--border)", fontSize: 20, textAlign: "center" }} />
+                          <input value={wizardNewTheme.name} onChange={e => setWizardNewTheme(p => ({ ...p, name: e.target.value }))} placeholder="Temanavn…" style={{ flex: 1, padding: "10px 14px", borderRadius: 10, border: "1px solid var(--border)", fontSize: 14, fontFamily: "DM Sans" }} />
+                          <button onClick={createThemeInWizard} style={{ padding: "10px 20px", borderRadius: 10, border: "none", background: "var(--primary)", color: "#fff", cursor: "pointer", fontFamily: "DM Sans", fontSize: 14, fontWeight: 600 }}>Tilføj</button>
+                        </div>
+                      </div>
+                    </div>
                   )}
 
-                  {/* Borgerspørgsmål */}
-                  {f.allow_citizen_questions && (
-                    <div style={{ borderTop: "1px solid var(--border)", paddingTop: 12, marginTop: 8 }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                        <span style={{ fontSize: 13, color: "var(--primary)", fontWeight: 500 }}>💬 Borgere kan stille spørgsmål{f.citizen_question_requires_approval ? " (kræver godkendelse)" : ""}</span>
-                        <button
-                          onClick={async () => {
-                            const res = await adminFetch(`/api/admin/forloeb/${f.id}/pending-questions`);
-                            if (res.ok) {
-                              setPendingQuestions(await res.json());
-                              setPendingForloebId(f.id);
-                            }
-                          }}
-                          style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid var(--primary)", background: "var(--primary-pale)", cursor: "pointer", fontFamily: "DM Sans", fontSize: 13, color: "var(--primary)" }}
-                        >Se afventende spørgsmål</button>
-                      </div>
-                      {pendingForloebId === f.id && pendingQuestions.length > 0 && (
-                        <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 10 }}>
-                          {pendingQuestions.map(q => (
-                            <div key={q.id} style={{ padding: 14, background: "var(--bg)", borderRadius: 10, border: "1px solid var(--border)" }}>
-                              <p style={{ fontSize: 14, fontWeight: 500, marginBottom: 4 }}>{q.body}</p>
-                              <p style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
-                                Fra: {q.is_anonymous ? "Anonym" : (q.submitted_by_email || "Ukendt")} · {fmt(q.created_at)}
-                              </p>
-                              <div style={{ display: "flex", gap: 8 }}>
-                                <button
-                                  onClick={async () => {
-                                    await adminFetch(`/api/admin/questions/${q.id}/approve`, { method: "PUT" });
-                                    setPendingQuestions(prev => prev.filter(x => x.id !== q.id));
-                                  }}
-                                  style={{ padding: "6px 14px", borderRadius: 8, border: "none", background: "var(--primary)", color: "#fff", cursor: "pointer", fontFamily: "DM Sans", fontSize: 13 }}
-                                >Godkend</button>
-                                <button
-                                  onClick={async () => {
-                                    await adminFetch(`/api/admin/questions/${q.id}`, { method: "DELETE" }).catch(() => {});
-                                    setPendingQuestions(prev => prev.filter(x => x.id !== q.id));
-                                  }}
-                                  style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--bg)", cursor: "pointer", fontFamily: "DM Sans", fontSize: 13, color: "var(--danger)" }}
-                                >Afvis</button>
+                  {/* ─── Trin 3 (themes) / Trin 2 (questions): Spørgsmål ─── */}
+                  {((wizardStep === 3 && wizardData.mode === "themes") || (wizardStep === 2 && wizardData.mode === "questions")) && (
+                    <div style={{ marginBottom: 24 }}>
+                      {wizardData.mode === "themes" ? (
+                        // Spørgsmål per tema
+                        wizardThemes.map(theme => (
+                          <div key={theme.id} style={{ background: "var(--card)", borderRadius: 16, padding: 20, border: "1px solid var(--border)", marginBottom: 16 }}>
+                            <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 12 }}>{theme.icon} {theme.name}</h3>
+                            {(wizardQsByTheme[theme.id] || []).map((q, i) => (
+                              <div key={q.id} draggable onDragStart={() => onDragStart(theme.id, i)} onDragOver={onDragOver} onDrop={() => onDropQ(theme.id, i)}
+                                style={{ padding: "10px 14px", background: wizardDrag?.list === theme.id && wizardDrag?.idx === i ? "var(--primary-pale)" : "var(--bg)", borderRadius: 10, marginBottom: 8, border: "1px solid var(--border)" }}>
+                                {wizardEditQ?.id === q.id ? (
+                                  <div>
+                                    <input value={wizardEditQ.title} onChange={e => setWizardEditQ(p => ({ ...p, title: e.target.value }))} style={{ ...inputS, marginBottom: 8 }} placeholder="Titel" />
+                                    <textarea value={wizardEditQ.body} onChange={e => setWizardEditQ(p => ({ ...p, body: e.target.value }))} style={{ ...inputS, minHeight: 60, resize: "vertical", marginBottom: 8 }} placeholder="Spørgsmålstekst" />
+                                    <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, marginBottom: 8, cursor: "pointer" }}>
+                                      <input type="checkbox" checked={wizardEditQ.allow_followup} onChange={e => setWizardEditQ(p => ({ ...p, allow_followup: e.target.checked }))} />
+                                      AI-opfølgning aktiveret
+                                    </label>
+                                    {wizardEditQ.allow_followup && (
+                                      <textarea value={wizardEditQ.followup_prompt} onChange={e => setWizardEditQ(p => ({ ...p, followup_prompt: e.target.value }))} style={{ ...inputS, minHeight: 50, resize: "vertical", marginBottom: 8, fontSize: 13 }} placeholder="Custom AI-prompt (efterlad tom for standard)" />
+                                    )}
+                                    <div style={{ display: "flex", gap: 8 }}>
+                                      <button onClick={saveEditedQ} style={{ padding: "6px 16px", borderRadius: 8, border: "none", background: "var(--primary)", color: "#fff", cursor: "pointer", fontFamily: "DM Sans", fontSize: 13 }}>Gem</button>
+                                      <button onClick={() => setWizardEditQ(null)} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid var(--border)", background: "transparent", cursor: "pointer", fontFamily: "DM Sans", fontSize: 13 }}>Annuller</button>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+                                    <span style={dragHandleS}>⠿</span>
+                                    <div style={{ flex: 1 }}>
+                                      <p style={{ fontSize: 13, fontWeight: 600, marginBottom: 2 }}>{q.title}</p>
+                                      <p style={{ fontSize: 13, color: "var(--muted)" }}>{q.body}</p>
+                                      <span style={{ fontSize: 11, color: q.allow_followup ? "var(--primary)" : "var(--muted)" }}>{q.allow_followup ? "✓ AI-opfølgning" : "Ingen opfølgning"}{q.followup_prompt ? " (custom prompt)" : ""}</span>
+                                    </div>
+                                    <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                                      <button onClick={() => startForkOrEdit(q, theme.id)} style={{ padding: "3px 10px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--bg)", cursor: "pointer", fontSize: 12, fontFamily: "DM Sans" }}>Rediger</button>
+                                      <button onClick={() => removeQFromWizard(q, theme.id)} style={{ padding: "3px 10px", borderRadius: 6, border: "1px solid var(--danger)", background: "transparent", color: "var(--danger)", cursor: "pointer", fontSize: 12, fontFamily: "DM Sans" }}>Fjern</button>
+                                    </div>
+                                  </div>
+                                )}
                               </div>
+                            ))}
+                            {/* Nyt spørgsmål til dette tema */}
+                            <div style={{ marginTop: 12, padding: "14px 16px", background: "var(--bg)", borderRadius: 10, border: "1px dashed var(--border)" }}>
+                              <p style={{ fontSize: 12, fontWeight: 600, color: "var(--muted)", marginBottom: 8 }}>+ Nyt spørgsmål til {theme.name}</p>
+                              <input value={wizardNewQTheme === theme.id ? wizardNewQ.title : ""} onChange={e => { setWizardNewQTheme(theme.id); setWizardNewQ(p => ({ ...p, title: e.target.value })); }} placeholder="Titel" style={{ ...inputS, marginBottom: 6, fontSize: 13 }} />
+                              <textarea value={wizardNewQTheme === theme.id ? wizardNewQ.body : ""} onChange={e => { setWizardNewQTheme(theme.id); setWizardNewQ(p => ({ ...p, body: e.target.value })); }} placeholder="Spørgsmålstekst" style={{ ...inputS, minHeight: 50, resize: "vertical", marginBottom: 6, fontSize: 13 }} />
+                              {wizardNewQTheme === theme.id && (
+                                <>
+                                  <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, marginBottom: 6, cursor: "pointer" }}>
+                                    <input type="checkbox" checked={wizardNewQ.allow_followup} onChange={e => setWizardNewQ(p => ({ ...p, allow_followup: e.target.checked }))} />
+                                    AI-opfølgning
+                                  </label>
+                                  {wizardNewQ.allow_followup && (
+                                    <textarea value={wizardNewQ.followup_prompt} onChange={e => setWizardNewQ(p => ({ ...p, followup_prompt: e.target.value }))} placeholder="Custom AI-prompt (valgfri)" style={{ ...inputS, minHeight: 44, resize: "vertical", marginBottom: 6, fontSize: 12 }} />
+                                  )}
+                                </>
+                              )}
+                              <button onClick={() => addQuestionToWizard(theme.id)} style={{ padding: "6px 16px", borderRadius: 8, border: "none", background: "var(--primary)", color: "#fff", cursor: "pointer", fontFamily: "DM Sans", fontSize: 13 }}>Tilføj spørgsmål</button>
+                            </div>
+                          </div>
+                        ))
+                      ) : (
+                        // Direkte spørgsmål (questions mode)
+                        <div style={{ background: "var(--card)", borderRadius: 16, padding: 24, border: "1px solid var(--border)", marginBottom: 16 }}>
+                          <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 4 }}>Spørgsmål</h3>
+                          <p style={{ fontSize: 13, color: "var(--muted)", marginBottom: 16 }}>Træk for at ændre rækkefølge.</p>
+                          {wizardDirectQs.length === 0 && <p style={{ fontSize: 13, color: "var(--muted)", marginBottom: 12 }}>Ingen spørgsmål endnu.</p>}
+                          {wizardDirectQs.map((q, i) => (
+                            <div key={q.id} draggable onDragStart={() => onDragStart("direct", i)} onDragOver={onDragOver} onDrop={() => onDropQ("direct", i)}
+                              style={{ padding: "10px 14px", background: wizardDrag?.list === "direct" && wizardDrag?.idx === i ? "var(--primary-pale)" : "var(--bg)", borderRadius: 10, marginBottom: 8, border: "1px solid var(--border)" }}>
+                              {wizardEditQ?.id === q.id ? (
+                                <div>
+                                  <input value={wizardEditQ.title} onChange={e => setWizardEditQ(p => ({ ...p, title: e.target.value }))} style={{ ...inputS, marginBottom: 8 }} placeholder="Titel" />
+                                  <textarea value={wizardEditQ.body} onChange={e => setWizardEditQ(p => ({ ...p, body: e.target.value }))} style={{ ...inputS, minHeight: 60, resize: "vertical", marginBottom: 8 }} />
+                                  <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, marginBottom: 8, cursor: "pointer" }}>
+                                    <input type="checkbox" checked={wizardEditQ.allow_followup} onChange={e => setWizardEditQ(p => ({ ...p, allow_followup: e.target.checked }))} />
+                                    AI-opfølgning aktiveret
+                                  </label>
+                                  {wizardEditQ.allow_followup && (
+                                    <textarea value={wizardEditQ.followup_prompt} onChange={e => setWizardEditQ(p => ({ ...p, followup_prompt: e.target.value }))} style={{ ...inputS, minHeight: 50, resize: "vertical", marginBottom: 8, fontSize: 13 }} placeholder="Custom AI-prompt (efterlad tom for standard)" />
+                                  )}
+                                  <div style={{ display: "flex", gap: 8 }}>
+                                    <button onClick={saveEditedQ} style={{ padding: "6px 16px", borderRadius: 8, border: "none", background: "var(--primary)", color: "#fff", cursor: "pointer", fontFamily: "DM Sans", fontSize: 13 }}>Gem</button>
+                                    <button onClick={() => setWizardEditQ(null)} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid var(--border)", background: "transparent", cursor: "pointer", fontFamily: "DM Sans", fontSize: 13 }}>Annuller</button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+                                  <span style={dragHandleS}>⠿</span>
+                                  <div style={{ flex: 1 }}>
+                                    <p style={{ fontSize: 13, fontWeight: 600, marginBottom: 2 }}>{q.title}</p>
+                                    <p style={{ fontSize: 13, color: "var(--muted)" }}>{q.body}</p>
+                                    <span style={{ fontSize: 11, color: q.allow_followup ? "var(--primary)" : "var(--muted)" }}>{q.allow_followup ? "✓ AI-opfølgning" : "Ingen opfølgning"}{q.followup_prompt ? " (custom prompt)" : ""}</span>
+                                  </div>
+                                  <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                                    <button onClick={() => startForkOrEdit(q, null)} style={{ padding: "3px 10px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--bg)", cursor: "pointer", fontSize: 12, fontFamily: "DM Sans" }}>Rediger</button>
+                                    <button onClick={() => removeQFromWizard(q, null)} style={{ padding: "3px 10px", borderRadius: 6, border: "1px solid var(--danger)", background: "transparent", color: "var(--danger)", cursor: "pointer", fontSize: 12, fontFamily: "DM Sans" }}>Fjern</button>
+                                  </div>
+                                </div>
+                              )}
                             </div>
                           ))}
+                          {/* Nyt spørgsmål */}
+                          <div style={{ marginTop: 12, padding: "14px 16px", background: "var(--bg)", borderRadius: 10, border: "1px dashed var(--border)" }}>
+                            <p style={{ fontSize: 12, fontWeight: 600, color: "var(--muted)", marginBottom: 8 }}>+ Nyt spørgsmål</p>
+                            <input value={wizardNewQ.title} onChange={e => setWizardNewQ(p => ({ ...p, title: e.target.value }))} placeholder="Titel" style={{ ...inputS, marginBottom: 6, fontSize: 13 }} />
+                            <textarea value={wizardNewQ.body} onChange={e => setWizardNewQ(p => ({ ...p, body: e.target.value }))} placeholder="Spørgsmålstekst" style={{ ...inputS, minHeight: 50, resize: "vertical", marginBottom: 6, fontSize: 13 }} />
+                            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, marginBottom: 6, cursor: "pointer" }}>
+                              <input type="checkbox" checked={wizardNewQ.allow_followup} onChange={e => setWizardNewQ(p => ({ ...p, allow_followup: e.target.checked }))} />
+                              AI-opfølgning
+                            </label>
+                            {wizardNewQ.allow_followup && (
+                              <textarea value={wizardNewQ.followup_prompt} onChange={e => setWizardNewQ(p => ({ ...p, followup_prompt: e.target.value }))} placeholder="Custom AI-prompt (valgfri)" style={{ ...inputS, minHeight: 44, resize: "vertical", marginBottom: 6, fontSize: 12 }} />
+                            )}
+                            <button onClick={() => addQuestionToWizard(null)} style={{ padding: "6px 16px", borderRadius: 8, border: "none", background: "var(--primary)", color: "#fff", cursor: "pointer", fontFamily: "DM Sans", fontSize: 13 }}>Tilføj spørgsmål</button>
+                          </div>
                         </div>
-                      )}
-                      {pendingForloebId === f.id && pendingQuestions.length === 0 && (
-                        <p style={{ fontSize: 13, color: "var(--muted)", marginTop: 8 }}>Ingen afventende spørgsmål.</p>
                       )}
                     </div>
                   )}
-                </div>
-              ))}
-            </div>
 
-            {/* Tema-tilknytning (themes-mode forløb) */}
-            {forloebList.some(f => f.mode === "themes") && (
-              <div style={{ background: "var(--card)", borderRadius: 16, padding: 20, border: "1px solid var(--border)", marginTop: 24 }}>
-                <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 12 }}>Tilknyt temaer til forløb</h3>
-                <p style={{ fontSize: 13, color: "var(--muted)", marginBottom: 14 }}>Vælg hvilket forløb hvert tema tilhører.</p>
-                {themes.map(t => (
-                  <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 10 }}>
-                    <span style={{ fontSize: 20 }}>{t.icon}</span>
-                    <span style={{ fontSize: 14, flex: 1 }}>{t.name}</span>
-                    <select
-                      value={t.forloeb_id || ""}
-                      onChange={async e => {
-                        const fid = e.target.value || null;
-                        const res = await adminFetch(`/api/admin/themes/${t.id}/forloeb?forloeb_id=${fid || ""}`, { method: "PUT" });
-                        if (res.ok) {
-                          const updated = await fetch(`${API_BASE}/api/themes`).then(r => r.json());
-                          setThemes(updated);
-                        }
-                      }}
-                      style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid var(--border)", fontSize: 13 }}
-                    >
-                      <option value="">Ikke tilknyttet</option>
-                      {forloebList.filter(f => f.mode === "themes").map(f => (
-                        <option key={f.id} value={f.id}>{f.title}</option>
-                      ))}
-                    </select>
+                  {/* Wizard footer */}
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 16, borderTop: "1px solid var(--border)" }}>
+                    <button
+                      onClick={() => setWizardStep(s => s - 1)}
+                      style={{ padding: "10px 20px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--card)", cursor: "pointer", fontFamily: "DM Sans", fontSize: 14, visibility: wizardStep > 1 ? "visible" : "hidden" }}
+                    >← Forrige</button>
+                    <div style={{ display: "flex", gap: 10 }}>
+                      {wizardStep < totalSteps && (
+                        <button
+                          onClick={async () => {
+                            if (wizardStep === 1) {
+                              if (!wizardData.title.trim()) { alert("Angiv en titel."); return; }
+                              const ok = await wizardSaveStep1();
+                              if (!ok) return;
+                            }
+                            setWizardStep(s => s + 1);
+                          }}
+                          style={{ padding: "10px 24px", borderRadius: 10, border: "none", background: "var(--primary)", color: "#fff", cursor: "pointer", fontFamily: "DM Sans", fontSize: 14, fontWeight: 600 }}
+                        >Næste →</button>
+                      )}
+                      {wizardStep === totalSteps && (
+                        <>
+                          <button onClick={async () => { await wizardSaveStep1(); alert("Gemt som kladde."); }} style={{ padding: "10px 20px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--card)", cursor: "pointer", fontFamily: "DM Sans", fontSize: 14 }}>Gem kladde</button>
+                          <button onClick={wizardPublish} style={{ padding: "10px 24px", borderRadius: 10, border: "none", background: "var(--primary)", color: "#fff", cursor: "pointer", fontFamily: "DM Sans", fontSize: 14, fontWeight: 600 }}>Publicér forløb</button>
+                        </>
+                      )}
+                    </div>
                   </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
+                </div>
+              ) : (
+                // ─── Forløb-liste ───
+                <div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
+                    <h1 style={{ fontSize: 28, fontWeight: 700 }}>Forløb</h1>
+                    <button onClick={() => openWizard(null)} style={{ padding: "10px 20px", borderRadius: 10, border: "none", background: "var(--primary)", color: "#fff", cursor: "pointer", fontFamily: "DM Sans", fontSize: 14, fontWeight: 600 }}>+ Nyt forløb</button>
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                    {forloebList.length === 0 && <p style={{ color: "var(--muted)", fontSize: 14 }}>Ingen forløb oprettet endnu.</p>}
+                    {forloebList.map(f => (
+                      <div key={f.id} style={{ background: "var(--card)", borderRadius: 16, padding: 20, border: `1px solid ${f.status === "draft" ? "var(--border)" : "var(--border)"}` }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
+                          <div>
+                            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2 }}>
+                              <h3 style={{ fontSize: 17, fontWeight: 700 }}>{f.title}</h3>
+                              {f.status === "draft" && <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 20, background: "#FFF3CD", color: "#856404", fontWeight: 600 }}>KLADDE</span>}
+                              {f.status === "published" && f.is_active && <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 20, background: "#D1FAE5", color: "#065F46", fontWeight: 600 }}>AKTIV</span>}
+                              {f.status === "published" && !f.is_active && <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 20, background: "var(--bg)", color: "var(--muted)", fontWeight: 600 }}>INAKTIV</span>}
+                            </div>
+                            <div style={{ fontSize: 13, color: "var(--muted)" }}>/{f.slug} · {f.mode === "themes" ? "Temaer" : "Direkte spørgsmål"}</div>
+                          </div>
+                          <div style={{ display: "flex", gap: 8 }}>
+                            <button onClick={() => openWizard(f)} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--bg)", cursor: "pointer", fontFamily: "DM Sans", fontSize: 13 }}>Rediger</button>
+                            <button onClick={async () => { if (!confirm(`Slet "${f.title}"?`)) return; await adminFetch(`/api/admin/forloeb/${f.id}`, { method: "DELETE" }); setForloebList(p => p.filter(x => x.id !== f.id)); }} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--bg)", cursor: "pointer", fontFamily: "DM Sans", fontSize: 13, color: "var(--danger)" }}>Slet</button>
+                          </div>
+                        </div>
+                        {f.description && <p style={{ fontSize: 14, color: "var(--muted)", marginBottom: 10, lineHeight: 1.5 }}>{f.description}</p>}
+                        {f.mode === "themes" && f.themes && f.themes.length > 0 && (
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+                            {f.themes.map(t => (
+                              <span key={t.id} style={{ fontSize: 12, padding: "3px 10px", borderRadius: 20, background: "var(--primary-pale)", color: "var(--primary)", border: "1px solid var(--primary)" }}>{t.icon} {t.name} ({t.question_count})</span>
+                            ))}
+                          </div>
+                        )}
+                        {f.mode === "questions" && <p style={{ fontSize: 13, color: "var(--muted)" }}>{f.question_count} aktive spørgsmål</p>}
+                        {f.allow_citizen_questions && (
+                          <div style={{ borderTop: "1px solid var(--border)", paddingTop: 10, marginTop: 8 }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                              <span style={{ fontSize: 13, color: "var(--primary)", fontWeight: 500 }}>💬 Borgere kan stille spørgsmål</span>
+                              <button onClick={async () => { const res = await adminFetch(`/api/admin/forloeb/${f.id}/pending-questions`); if (res.ok) { setPendingQuestions(await res.json()); setPendingForloebId(f.id); } }} style={{ padding: "4px 12px", borderRadius: 8, border: "1px solid var(--primary)", background: "var(--primary-pale)", cursor: "pointer", fontFamily: "DM Sans", fontSize: 12, color: "var(--primary)" }}>Se afventende</button>
+                            </div>
+                            {pendingForloebId === f.id && (
+                              <div style={{ marginTop: 10 }}>
+                                {pendingQuestions.length === 0 && <p style={{ fontSize: 13, color: "var(--muted)" }}>Ingen afventende.</p>}
+                                {pendingQuestions.map(q => (
+                                  <div key={q.id} style={{ padding: 12, background: "var(--bg)", borderRadius: 8, border: "1px solid var(--border)", marginBottom: 8 }}>
+                                    <p style={{ fontSize: 13, fontWeight: 500, marginBottom: 6 }}>{q.body}</p>
+                                    <p style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8 }}>Fra: {q.is_anonymous ? "Anonym" : q.submitted_by_email || "Ukendt"} · {fmt(q.created_at)}</p>
+                                    <div style={{ display: "flex", gap: 8 }}>
+                                      <button onClick={async () => { await adminFetch(`/api/admin/questions/${q.id}/approve`, { method: "PUT" }); setPendingQuestions(p => p.filter(x => x.id !== q.id)); }} style={{ padding: "5px 12px", borderRadius: 7, border: "none", background: "var(--primary)", color: "#fff", cursor: "pointer", fontFamily: "DM Sans", fontSize: 12 }}>Godkend</button>
+                                      <button onClick={async () => { await adminFetch(`/api/admin/questions/${q.id}`, { method: "DELETE" }).catch(() => {}); setPendingQuestions(p => p.filter(x => x.id !== q.id)); }} style={{ padding: "5px 12px", borderRadius: 7, border: "1px solid var(--border)", background: "var(--bg)", cursor: "pointer", fontFamily: "DM Sans", fontSize: 12, color: "var(--danger)" }}>Afvis</button>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         {/* ── Questions Tab ── */}
         {tab === "questions" && (

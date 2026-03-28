@@ -64,9 +64,19 @@ OLLAMA_MODEL=qwen3:14b
 
 # Lydoptagelser
 UPLOAD_DIR=C:\inetpub\wwwroot\stemmer\uploads
+
+# Email-notifikationer (Microsoft 365)
+SMTP_HOST=smtp.office365.com
+SMTP_PORT=587
+SMTP_USER=noreply@norddjurs.dk
+SMTP_PASSWORD=adgangskode-til-postkassen
+SMTP_FROM=noreply@norddjurs.dk
+ADMIN_NOTIFY_EMAIL=din@norddjurs.dk
 ```
 
 **Vigtigt:** `.env` må ALDRIG committes til git.
+
+> **Email-notifikationer** er valgfrie — hvis `SMTP_USER` eller `SMTP_PASSWORD` ikke er udfyldt, deaktiveres notifikationer automatisk uden fejl. Udfyld dem når Microsoft 365-postkassen er klar.
 
 ### 2c. Opret SQL Server-database
 
@@ -255,10 +265,12 @@ Alle samtykke-hændelser (givet/trukket tilbage) logges i `consent_logs`-tabelle
 - [ ] Ollama kørende med `qwen3:14b`
 - [ ] CORS i `main.py` begrænset til `https://stemmer.norddjurs.dk`
 - [ ] `UPLOAD_DIR` peger på korrekt sti med skriverettigheder
+- [ ] Email-notifikationer: Microsoft 365-postkasse oprettet og SMTP-felter udfyldt i `.env`
 - [ ] NIS2-dokumentation godkendt af Mikael
 - [ ] DPO har fastsat opbevaringsperiode (indsæt dato i `PRIVACY_POLICY_TEXT`)
 - [ ] Test af borgerflow fra end til end
 - [ ] Test af admin-login og dashboard
+- [ ] Test af email-notifikation: stil et borgerspørgsmål og verificér at email ankommer
 
 ---
 

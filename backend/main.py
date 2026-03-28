@@ -44,6 +44,7 @@ from auth import (
 )
 from ai_service import generate_followup, generate_analysis
 from transcribe import transcribe_file
+from email_service import notify_citizen_question, notify_flagged_response
 
 # ─── App setup ───
 app = FastAPI(title="Stemmer fra Norddjus", version="1.0.0")
@@ -242,6 +243,8 @@ class ForloebCreate(BaseModel):
     description: Optional[str] = None
     slug: str
     mode: str = "themes"   # 'themes' | 'questions'
+    status: str = "draft"  # 'draft' | 'published'
+    image_url: Optional[str] = None
     allow_citizen_questions: bool = False
     citizen_question_requires_approval: bool = True
     is_active: bool = True
@@ -254,12 +257,22 @@ class ForloebUpdate(BaseModel):
     description: Optional[str] = None
     slug: Optional[str] = None
     mode: Optional[str] = None
+    status: Optional[str] = None
+    image_url: Optional[str] = None
     allow_citizen_questions: Optional[bool] = None
     citizen_question_requires_approval: Optional[bool] = None
     is_active: Optional[bool] = None
     start_date: Optional[datetime] = None
     end_date: Optional[datetime] = None
     sort_order: Optional[int] = None
+
+class ReorderItem(BaseModel):
+    id: str
+    sort_order: int
+
+class QuestionFork(BaseModel):
+    theme_id: Optional[str] = None
+    forloeb_id: Optional[str] = None
 
 class CitizenQuestionCreate(BaseModel):
     body: str
@@ -568,6 +581,12 @@ def submit_citizen_question(
     db.refresh(q)
 
     if needs_approval:
+        notify_citizen_question(
+            forloeb_title=f.title,
+            question_body=body,
+            citizen_email=citizen.email,
+            is_anonymous=data.is_anonymous,
+        )
         return {"ok": True, "message": "Dit spørgsmål er modtaget og vil blive gennemgået"}
     return {"ok": True, "message": "Dit spørgsmål er tilføjet til forløbet", "question": _question_dict(q)}
 
@@ -676,6 +695,15 @@ def submit_response(
     db.add(response)
     db.commit()
     db.refresh(response)
+
+    if is_flagged and not data.is_followup:
+        question = db.query(Question).filter(Question.id == data.question_id).first()
+        notify_flagged_response(
+            question_title=question.title if question else data.question_id,
+            response_text=data.text_content or "",
+            citizen_email=citizen.email if citizen else "Anonym",
+        )
+
     return _response_dict(response)
 
 
@@ -737,6 +765,14 @@ async def submit_audio_response(
     db.add(response)
     db.commit()
     db.refresh(response)
+
+    if is_flagged and not is_followup:
+        question = db.query(Question).filter(Question.id == question_id).first()
+        notify_flagged_response(
+            question_title=question.title if question else question_id,
+            response_text=text or "",
+            citizen_email=citizen.email if citizen else "Anonym",
+        )
 
     return {**_response_dict(response), "transcription": text}
 
@@ -911,6 +947,72 @@ def admin_pending_questions(forloeb_id: str, admin: AdminUser = Depends(get_curr
             d["submitted_by_email"] = submitter.email if submitter else None
         result.append(d)
     return result
+
+
+@app.put("/api/admin/forloeb/{forloeb_id}/publish")
+def admin_publish_forloeb(forloeb_id: str, admin: AdminUser = Depends(get_current_admin), db: Session = Depends(get_db)):
+    """Publicér et forløb — validerer at titel, beskrivelse og mindst ét spørgsmål er udfyldt."""
+    f = db.query(Forloeb).filter(Forloeb.id == forloeb_id).first()
+    if not f:
+        raise HTTPException(404, "Forløb ikke fundet")
+    if not f.title or not f.title.strip():
+        raise HTTPException(422, "Forløbet mangler en titel")
+    if not f.description or not f.description.strip():
+        raise HTTPException(422, "Forløbet mangler en beskrivelse")
+    # Tjek mindst ét aktivt spørgsmål
+    if f.mode == "questions":
+        q_count = db.query(Question).filter(Question.forloeb_id == forloeb_id, Question.is_active == True).count()
+    else:
+        theme_ids = [t.id for t in db.query(Theme).filter(Theme.forloeb_id == forloeb_id).all()]
+        q_count = db.query(Question).filter(Question.theme_id.in_(theme_ids), Question.is_active == True).count() if theme_ids else 0
+    if q_count == 0:
+        raise HTTPException(422, "Forløbet skal have mindst ét aktivt spørgsmål")
+    f.status = "published"
+    f.is_active = True
+    f.updated_at = datetime.utcnow()
+    db.commit()
+    return _forloeb_dict(f, db)
+
+
+@app.put("/api/admin/forloeb/{forloeb_id}/reorder-themes")
+def admin_reorder_themes(forloeb_id: str, items: List[ReorderItem], admin: AdminUser = Depends(get_current_admin), db: Session = Depends(get_db)):
+    """Gem ny rækkefølge for temaer i et forløb."""
+    for item in items:
+        db.query(Theme).filter(Theme.id == item.id).update({"sort_order": item.sort_order})
+    db.commit()
+    return {"ok": True}
+
+
+@app.put("/api/admin/forloeb/{forloeb_id}/reorder-questions")
+def admin_reorder_questions(forloeb_id: str, items: List[ReorderItem], admin: AdminUser = Depends(get_current_admin), db: Session = Depends(get_db)):
+    """Gem ny rækkefølge for spørgsmål (direkte eller via temaer) i et forløb."""
+    for item in items:
+        db.query(Question).filter(Question.id == item.id).update({"sort_order": item.sort_order})
+    db.commit()
+    return {"ok": True}
+
+
+@app.post("/api/admin/questions/{question_id}/fork")
+def admin_fork_question(question_id: str, data: QuestionFork, admin: AdminUser = Depends(get_current_admin), db: Session = Depends(get_db)):
+    """Kopiér et spørgsmål til nyt med ny tilknytning (fork ved redigering af delt spørgsmål)."""
+    orig = db.query(Question).filter(Question.id == question_id).first()
+    if not orig:
+        raise HTTPException(404, "Spørgsmål ikke fundet")
+    new_q = Question(
+        id=str(uuid.uuid4()),
+        theme_id=data.theme_id,
+        forloeb_id=data.forloeb_id,
+        title=orig.title,
+        body=orig.body,
+        is_active=orig.is_active,
+        allow_followup=orig.allow_followup,
+        followup_prompt=orig.followup_prompt,
+        sort_order=orig.sort_order,
+    )
+    db.add(new_q)
+    db.commit()
+    db.refresh(new_q)
+    return _question_dict(new_q)
 
 
 @app.put("/api/admin/questions/{question_id}/approve")
@@ -1420,6 +1522,8 @@ def _forloeb_dict(f: Forloeb, db: Session) -> dict:
         "description": f.description,
         "slug": f.slug,
         "mode": f.mode,
+        "status": getattr(f, "status", "published"),
+        "image_url": getattr(f, "image_url", None),
         "allow_citizen_questions": f.allow_citizen_questions,
         "citizen_question_requires_approval": f.citizen_question_requires_approval,
         "is_active": f.is_active,
@@ -1476,6 +1580,7 @@ def seed_data(db: Session):
         description="Del din holdning til kommunens prioriteringer for Budget 2027. Det tager kun 2-4 minutter.",
         slug="budget-2027",
         mode="themes",
+        status="published",
         allow_citizen_questions=False,
         citizen_question_requires_approval=True,
         is_active=True,
