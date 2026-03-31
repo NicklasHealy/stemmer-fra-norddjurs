@@ -15,9 +15,33 @@ from models import Citizen, AdminUser
 
 load_dotenv()
 
-SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-skift-mig-i-produktion")
+SECRET_KEY = os.getenv("SECRET_KEY", "")
 ALGORITHM = os.getenv("ALGORITHM", "HS256")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "10080"))  # 7 dage
+
+# Kendte usikre standardværdier der aldrig må bruges i produktion
+_UNSAFE_KEYS = {
+    "",
+    "dev-secret-skift-mig-i-produktion",
+    "skift-mig-til-en-lang-tilfældig-streng-i-produktion",
+    "change-me",
+    "secret",
+}
+
+if SECRET_KEY in _UNSAFE_KEYS or len(SECRET_KEY) < 32:
+    import warnings
+    warnings.warn(
+        "\n" + "=" * 70 + "\n"
+        "SIKKERHEDSADVARSEL: SECRET_KEY er ikke sat korrekt.\n"
+        "Minimumskrav: 32 tegn, unik og tilfældig.\n"
+        "Generér en ny nøgle med:\n"
+        "  python -c \"import secrets; print(secrets.token_hex(32))\"\n"
+        "Sæt den i backend/.env som SECRET_KEY=<din-nøgle>\n"
+        + "=" * 70,
+        stacklevel=1,
+    )
+    if not SECRET_KEY:
+        SECRET_KEY = "unsafe-dev-fallback-DO-NOT-USE-IN-PRODUCTION-please-set-env"
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 security = HTTPBearer(auto_error=False)
