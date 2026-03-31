@@ -13,11 +13,11 @@ API docs: http://localhost:8321/docs
 import os
 import re
 import uuid
-import shutil
 import csv
 import io
 import secrets
 import string
+import concurrent.futures
 from datetime import datetime, timedelta
 from typing import Optional, List
 
@@ -29,6 +29,9 @@ from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from dotenv import load_dotenv
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 load_dotenv()
 
@@ -41,25 +44,73 @@ from models import (
 from auth import (
     hash_password, verify_password, create_token,
     get_current_citizen, get_optional_citizen, get_current_admin,
+    _UNSAFE_KEYS,
 )
 from ai_service import generate_followup, generate_analysis
 from transcribe import transcribe_file
 from email_service import notify_citizen_question, notify_flagged_response
+from constants import (
+    PASSWORD_MIN_LENGTH, TEMP_PASSWORD_EXPIRY_HOURS,
+    MAX_UPLOAD_SIZE_MB, ALLOWED_AUDIO_EXTENSIONS, ALLOWED_AUDIO_MIMETYPES,
+    AI_ANALYSIS_SAMPLE_SIZE, AI_PERSPECTIVES_SAMPLE_SIZE, AI_DEFAULT_PERSPECTIVE_THRESHOLD,
+    CITIZEN_QUESTION_MIN_LENGTH, CITIZEN_QUESTION_MAX_LENGTH,
+    MODERATION_REGEX_TIMEOUT_SECONDS,
+)
 
 # ─── App setup ───
 app = FastAPI(title="Stemmer fra Norddjus", version="1.0.0")
 
+# ─── Rate limiting ───
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# ─── CORS ───
+_raw_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173")
+ALLOWED_ORIGINS = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # I produktion: begræns til din frontend-URL
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
+
+
+# ─── Sikkerhedsheaders ───
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    return response
+
 
 # Mappe til lydoptagelser
 UPLOAD_DIR = os.getenv("UPLOAD_DIR", "./uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_SIZE_MB", str(MAX_UPLOAD_SIZE_MB))) * 1024 * 1024
+
+
+# ─── Startup security check ───
+@app.on_event("startup")
+async def startup_security_check():
+    from auth import SECRET_KEY
+    issues = []
+    if SECRET_KEY in _UNSAFE_KEYS or len(SECRET_KEY) < 32:
+        issues.append("SECRET_KEY er ikke sat korrekt (min. 32 tegn, unik og tilfældig)")
+    if "*" in ALLOWED_ORIGINS:
+        issues.append("ALLOWED_ORIGINS tillader alle origins (*) — sæt konkrete domæner i produktion")
+    if issues:
+        print("\n" + "⚠️  " * 20)
+        for issue in issues:
+            print(f"⚠️  SIKKERHEDSADVARSEL: {issue}")
+        print("⚠️  " * 20 + "\n")
+
 
 # ─── Samtykke-version (opgave 14b) ───
 # Bump denne ved ændring af samtykketerms — borgere med lavere version bedes re-acceptere
@@ -124,8 +175,8 @@ PRIVACY_POLICY_TEXT = (
 
 def validate_citizen_password(password: str) -> Optional[str]:
     """Returnerer fejlbesked hvis adgangskoden ikke opfylder kravene, ellers None."""
-    if len(password) < 8:
-        return "Adgangskoden skal være mindst 8 tegn"
+    if len(password) < PASSWORD_MIN_LENGTH:
+        return f"Adgangskoden skal være mindst {PASSWORD_MIN_LENGTH} tegn"
     if not re.search(r"[A-Z]", password):
         return "Adgangskoden skal indeholde mindst ét stort bogstav (A-Z)"
     if not re.search(r"[a-z]", password):
@@ -136,6 +187,17 @@ def validate_citizen_password(password: str) -> Optional[str]:
 
 
 # ─── Indholdsmoderation (opgave 8c) ───
+
+def _safe_regex_match(pattern: str, text: str) -> bool:
+    """Evaluér regex med timeout for at beskytte mod ReDoS (catastrophic backtracking)."""
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(re.search, pattern, text, re.IGNORECASE)
+        try:
+            return bool(future.result(timeout=MODERATION_REGEX_TIMEOUT_SECONDS))
+        except concurrent.futures.TimeoutError:
+            print(f"[Moderation] Regex timeout — mønster: {pattern[:60]!r}")
+            return False
+
 
 def check_moderation(text: str, db: Session) -> bool:
     """Returnerer True hvis indholdet skal flagges til admin-review."""
@@ -149,7 +211,7 @@ def check_moderation(text: str, db: Session) -> bool:
                 if rule.pattern.lower() in text_lower:
                     return True
             elif rule.rule_type == "regex":
-                if re.search(rule.pattern, text, re.IGNORECASE):
+                if _safe_regex_match(rule.pattern, text):
                     return True
         except Exception:
             pass
@@ -293,7 +355,8 @@ def generate_temp_password() -> str:
 # ═══════════════════════════════════════════════
 
 @app.post("/api/citizen/register")
-def citizen_register(data: CitizenRegister, db: Session = Depends(get_db)):
+@limiter.limit("5/minute")
+def citizen_register(request: Request, data: CitizenRegister, db: Session = Depends(get_db)):
     # Opgave 9b: password-validering
     err = validate_citizen_password(data.password)
     if err:
@@ -315,7 +378,8 @@ def citizen_register(data: CitizenRegister, db: Session = Depends(get_db)):
 
 
 @app.post("/api/citizen/login")
-def citizen_login(data: CitizenLogin, db: Session = Depends(get_db)):
+@limiter.limit("10/minute")
+def citizen_login(request: Request, data: CitizenLogin, db: Session = Depends(get_db)):
     citizen = db.query(Citizen).filter(Citizen.email == data.email.lower().strip()).first()
     if not citizen or not verify_password(data.password, citizen.password_hash):
         raise HTTPException(401, "Forkert email eller adgangskode")
@@ -638,14 +702,27 @@ def create_area(data: AreaCreate, db: Session = Depends(get_db)):
 # ═══════════════════════════════════════════════
 
 @app.post("/api/transcribe")
-async def transcribe_preview(file: UploadFile = File(...)):
+@limiter.limit("10/minute")
+async def transcribe_preview(request: Request, file: UploadFile = File(...)):
     """Transskribér lyd til tekst uden at gemme som besvarelse — bruges til preview."""
-    ext = os.path.splitext(file.filename or "audio.webm")[1] or ".webm"
+    # Valider MIME-type
+    content_type = (file.content_type or "").split(";")[0].strip()
+    if content_type and content_type not in ALLOWED_AUDIO_MIMETYPES:
+        raise HTTPException(415, f"Ikke-understøttet filformat: {content_type}")
+
+    # Valider filstørrelse
+    contents = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(contents) > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, f"Filen er for stor (maks {MAX_UPLOAD_BYTES // 1024 // 1024} MB)")
+
+    ext = os.path.splitext(file.filename or "")[-1].lower()
+    if ext not in ALLOWED_AUDIO_EXTENSIONS:
+        ext = ".webm"
     filename = f"tmp_{uuid.uuid4()}{ext}"
     filepath = os.path.join(UPLOAD_DIR, filename)
     try:
         with open(filepath, "wb") as f:
-            shutil.copyfileobj(file.file, f)
+            f.write(contents)
         text = transcribe_file(filepath)
         return {"text": text}
     except Exception as e:
@@ -708,7 +785,9 @@ def submit_response(
 
 
 @app.post("/api/responses/audio")
+@limiter.limit("20/minute")
 async def submit_audio_response(
+    request: Request,
     question_id: str = Query(...),
     session_id: str = Query(...),
     is_followup: bool = Query(False),
@@ -719,6 +798,16 @@ async def submit_audio_response(
     db: Session = Depends(get_db),
 ):
     """Upload lyd, transskribér, og gem som response."""
+
+    # Valider MIME-type
+    content_type = (file.content_type or "").split(";")[0].strip()
+    if content_type and content_type not in ALLOWED_AUDIO_MIMETYPES:
+        raise HTTPException(415, f"Ikke-understøttet filformat: {content_type}")
+
+    # Valider filstørrelse (læs i én operation)
+    contents = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(contents) > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, f"Filen er for stor (maks {MAX_UPLOAD_BYTES // 1024 // 1024} MB)")
 
     # Opgave 7b: Én besvarelse pr. spørgsmål
     if citizen and not is_followup:
@@ -731,13 +820,15 @@ async def submit_audio_response(
         if existing:
             raise HTTPException(409, "Du har allerede besvaret dette spørgsmål")
 
-    # Gem lydfil
-    ext = os.path.splitext(file.filename or "audio.webm")[1] or ".webm"
+    # Gem lydfil med saniteret extension
+    ext = os.path.splitext(file.filename or "")[-1].lower()
+    if ext not in ALLOWED_AUDIO_EXTENSIONS:
+        ext = ".webm"
     filename = f"{uuid.uuid4()}{ext}"
     filepath = os.path.join(UPLOAD_DIR, filename)
 
     with open(filepath, "wb") as f:
-        shutil.copyfileobj(file.file, f)
+        f.write(contents)
 
     # Transskribér
     try:
@@ -833,7 +924,8 @@ def get_followup_question(data: FollowupRequest, db: Session = Depends(get_db)):
 # ═══════════════════════════════════════════════
 
 @app.post("/api/admin/login")
-def admin_login(data: AdminLogin, db: Session = Depends(get_db)):
+@limiter.limit("10/minute")
+def admin_login(request: Request, data: AdminLogin, db: Session = Depends(get_db)):
     admin = db.query(AdminUser).filter(AdminUser.email == data.email.lower()).first()
     if not admin or not verify_password(data.password, admin.password_hash):
         raise HTTPException(401, "Forkert email eller adgangskode")
@@ -1329,6 +1421,11 @@ def admin_get_moderation_rules(admin: AdminUser = Depends(get_current_admin), db
 def admin_create_moderation_rule(data: ModerationRuleCreate, admin: AdminUser = Depends(get_current_admin), db: Session = Depends(get_db)):
     if not data.pattern.strip():
         raise HTTPException(400, "Mønster må ikke være tomt")
+    if data.rule_type == "regex":
+        try:
+            re.compile(data.pattern)
+        except re.error as e:
+            raise HTTPException(400, f"Ugyldigt regex-mønster: {e}")
     rule = ModerationRule(
         id=str(uuid.uuid4()),
         rule_type=data.rule_type,
@@ -1619,10 +1716,19 @@ def seed_data(db: Session):
     for i, name in enumerate(areas_data, start=1):
         db.add(Area(id=str(uuid.uuid4()), name=name, sort_order=i))
 
+    admin_initial_password = os.getenv("ADMIN_INITIAL_PASSWORD", "").strip()
+    if not admin_initial_password:
+        admin_initial_password = generate_temp_password()
+        print("\n" + "=" * 60)
+        print(f"[SETUP] Admin email:    admin@norddjurs.dk")
+        print(f"[SETUP] Admin kodeord: {admin_initial_password}")
+        print("[SETUP] Gem dette og skift det straks efter første login!")
+        print("=" * 60 + "\n")
+
     db.add(AdminUser(
         id=str(uuid.uuid4()),
         email="admin@norddjurs.dk",
-        password_hash=hash_password("norddjurs2025"),
+        password_hash=hash_password(admin_initial_password),
         name="Administrator",
     ))
 
