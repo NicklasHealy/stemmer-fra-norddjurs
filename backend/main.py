@@ -192,6 +192,7 @@ class QuestionUpdate(BaseModel):
     title: Optional[str] = None
     body: Optional[str] = None
     theme_id: Optional[str] = None
+    forloeb_id: Optional[str] = None
     is_active: Optional[bool] = None
     allow_followup: Optional[bool] = None
     followup_prompt: Optional[str] = None

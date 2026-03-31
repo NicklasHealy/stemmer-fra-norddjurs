@@ -120,7 +120,13 @@ def migrate_db():
 
     # questions: nye kolonner
     try:
-        q_cols = {col["name"] for col in inspector.get_columns("questions")}
+        q_cols_info = inspector.get_columns("questions")
+        q_cols = {col["name"] for col in q_cols_info}
+        # theme_id var nullable=False i original schema — gør nullable så spørgsmål kan oprettes uden tema (questions-mode forløb)
+        theme_id_col = next((c for c in q_cols_info if c["name"] == "theme_id"), None)
+        if theme_id_col and not theme_id_col.get("nullable", True):
+            if not is_sqlite:
+                migrations.append("ALTER TABLE questions ALTER COLUMN theme_id NVARCHAR(MAX) NULL")
         if "forloeb_id" not in q_cols:
             if is_sqlite:
                 migrations.append("ALTER TABLE questions ADD COLUMN forloeb_id VARCHAR(36) NULL")

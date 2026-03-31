@@ -740,7 +740,7 @@ const CitizenFlow = ({ onAdminClick }) => {
       </div>
       <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", textAlign: "center" }}>
         <div style={{ width: 120, height: 120, borderRadius: 20, background: "var(--primary)", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 24, boxShadow: "0 8px 24px rgba(45, 90, 61, 0.25)" }}>
-          <span style={{ fontSize: 52 }}>🗣️</span>
+          <svg xmlns="http://www.w3.org/2000/svg" height="52px" viewBox="0 -960 960 960" width="52px" fill="#ffffff"><path d="M395-435q-35-35-35-85v-240q0-50 35-85t85-35q50 0 85 35t35 85v240q0 50-35 85t-85 35q-50 0-85-35Zm85-205Zm-40 520v-123q-104-14-172-93t-68-184h80q0 83 58.5 141.5T480-320q83 0 141.5-58.5T680-520h80q0 105-68 184t-172 93v123h-80Zm68.5-371.5Q520-503 520-520v-240q0-17-11.5-28.5T480-800q-17 0-28.5 11.5T440-760v240q0 17 11.5 28.5T480-480q17 0 28.5-11.5Z"/></svg>
         </div>
         <h1 style={{ fontSize: 28, fontWeight: 700, marginBottom: 12, lineHeight: 1.2 }}>Stemmer fra Norddjurs</h1>
         <p style={{ fontSize: 17, color: "var(--muted)", lineHeight: 1.6, maxWidth: 340, marginBottom: 40 }}>Vi vil gerne høre din holdning til kommunens prioriteringer. Det tager kun 2-4 minutter.</p>
@@ -2064,6 +2064,7 @@ const AdminPanel = ({ adminToken, onLogout }) => {
           const addQuestionToWizard = async (themeId) => {
             const q = wizardNewQ;
             if (!q.title.trim() || !q.body.trim()) return;
+            if (!themeId && !wizardForloebId) return;
             const payload = { title: q.title, body: q.body, allow_followup: q.allow_followup, followup_prompt: q.followup_prompt, is_active: true, sort_order: 99,
               ...(themeId ? { theme_id: themeId, forloeb_id: null } : { theme_id: null, forloeb_id: wizardForloebId })
             };

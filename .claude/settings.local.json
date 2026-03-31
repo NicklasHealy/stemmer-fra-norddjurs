@@ -18,7 +18,8 @@
       "Bash(npm run:*)",
       "Bash(python -c \"import ast; ast.parse\\(open\\(''main.py''\\).read\\(\\)\\); print\\(''OK''\\)\")",
       "Bash(python -c \"import ast; ast.parse\\(open\\(''email_service.py''\\).read\\(\\)\\); print\\(''OK''\\)\")",
-      "Bash(python -c \"import ast; ast.parse\\(open\\(''email_service.py'', encoding=''utf-8''\\).read\\(\\)\\); print\\(''email_service.py OK''\\)\")"
+      "Bash(python -c \"import ast; ast.parse\\(open\\(''email_service.py'', encoding=''utf-8''\\).read\\(\\)\\); print\\(''email_service.py OK''\\)\")",
+      "Bash(gh issue:*)"
     ]
   }
 }
