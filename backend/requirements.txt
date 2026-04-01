@@ -28,3 +28,8 @@ transformers==4.46.0
 torch==2.5.0
 numpy>=1.26.0
 av>=12.0.0              # PyAV: bundlet ffmpeg-bindings — håndterer webm/opus/mp3 uden ekstern ffmpeg
+
+# ─── Test ───
+pytest>=8.0
+httpx>=0.27             # AsyncClient til FastAPI TestClient
+pytest-cov>=5.0         # Coverage-rapportering

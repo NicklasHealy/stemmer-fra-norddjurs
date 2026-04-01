@@ -141,12 +141,15 @@ def admin_pending_questions(forloeb_id: str, admin: AdminUser = Depends(get_curr
         Question.is_citizen_submitted == True,
         Question.is_approved == False,
     ).order_by(Question.created_at.desc()).all()
+    # Batch-load submitters i stedet for én query pr. spørgsmål
+    submitter_ids = {q.submitted_by_citizen_id for q in questions if q.submitted_by_citizen_id}
+    submitters = {c.id: c for c in db.query(Citizen).filter(Citizen.id.in_(submitter_ids)).all()} if submitter_ids else {}
     result = []
     for q in questions:
         d = question_dict(q)
         if q.submitted_by_citizen_id:
-            submitter = db.query(Citizen).filter(Citizen.id == q.submitted_by_citizen_id).first()
-            d["submitted_by_email"] = submitter.email if submitter else None
+            s = submitters.get(q.submitted_by_citizen_id)
+            d["submitted_by_email"] = s.email if s else None
         result.append(d)
     return result
 
@@ -305,12 +308,22 @@ def admin_list_responses(
     total = query.count()
     responses = query.order_by(Response.created_at.desc()).offset(offset).limit(limit).all()
 
+    # Batch-load relaterede data for at undgå N+1 queries
+    question_ids = {r.question_id for r in responses}
+    questions_map = {q.id: q for q in db.query(Question).filter(Question.id.in_(question_ids)).all()} if question_ids else {}
+    theme_ids = {q.theme_id for q in questions_map.values() if q.theme_id}
+    themes_map = {t.id: t for t in db.query(Theme).filter(Theme.id.in_(theme_ids)).all()} if theme_ids else {}
+    cit_ids = {r.citizen_id for r in responses if r.citizen_id}
+    metas_map = {m.citizen_id: m for m in db.query(ResponseMetadata).filter(ResponseMetadata.citizen_id.in_(cit_ids)).all()} if cit_ids else {}
+    resp_ids = {r.id for r in responses}
+    followups_map = {f.parent_response_id: f for f in db.query(Response).filter(Response.parent_response_id.in_(resp_ids)).all()} if resp_ids else {}
+
     result = []
     for r in responses:
-        q = db.query(Question).filter(Question.id == r.question_id).first()
-        t = db.query(Theme).filter(Theme.id == q.theme_id).first() if q and q.theme_id else None
-        met = db.query(ResponseMetadata).filter(ResponseMetadata.citizen_id == r.citizen_id).first() if r.citizen_id else None
-        followup = db.query(Response).filter(Response.parent_response_id == r.id).first()
+        q = questions_map.get(r.question_id)
+        t = themes_map.get(q.theme_id) if q and q.theme_id else None
+        met = metas_map.get(r.citizen_id)
+        followup = followups_map.get(r.id)
         result.append({
             **response_dict(r),
             "question": question_dict(q) if q else None,
@@ -357,11 +370,21 @@ def admin_export_csv(admin: AdminUser = Depends(get_current_admin), db: Session 
     writer = csv.writer(output)
     writer.writerow(["ID", "Tema", "Spørgsmål", "Svar", "Type", "Flagget", "Opfølgningsspørgsmål", "Opfølgningssvar", "Dato", "Alder", "Område", "Rolle"])
 
+    # Batch-load relaterede data for at undgå N+1 queries
+    csv_question_ids = {r.question_id for r in responses}
+    csv_questions_map = {q.id: q for q in db.query(Question).filter(Question.id.in_(csv_question_ids)).all()} if csv_question_ids else {}
+    csv_theme_ids = {q.theme_id for q in csv_questions_map.values() if q.theme_id}
+    csv_themes_map = {t.id: t for t in db.query(Theme).filter(Theme.id.in_(csv_theme_ids)).all()} if csv_theme_ids else {}
+    csv_cit_ids = {r.citizen_id for r in responses if r.citizen_id}
+    csv_metas_map = {m.citizen_id: m for m in db.query(ResponseMetadata).filter(ResponseMetadata.citizen_id.in_(csv_cit_ids)).all()} if csv_cit_ids else {}
+    csv_resp_ids = {r.id for r in responses}
+    csv_followups_map = {f.parent_response_id: f for f in db.query(Response).filter(Response.parent_response_id.in_(csv_resp_ids)).all()} if csv_resp_ids else {}
+
     for r in responses:
-        q = db.query(Question).filter(Question.id == r.question_id).first()
-        t = db.query(Theme).filter(Theme.id == q.theme_id).first() if q and q.theme_id else None
-        met = db.query(ResponseMetadata).filter(ResponseMetadata.citizen_id == r.citizen_id).first() if r.citizen_id else None
-        followup = db.query(Response).filter(Response.parent_response_id == r.id).first()
+        q = csv_questions_map.get(r.question_id)
+        t = csv_themes_map.get(q.theme_id) if q and q.theme_id else None
+        met = csv_metas_map.get(r.citizen_id)
+        followup = csv_followups_map.get(r.id)
         writer.writerow([
             r.id, t.name if t else "", q.body if q else "",
             r.text_content or "", r.response_type,
@@ -401,15 +424,20 @@ def admin_dashboard(admin: AdminUser = Depends(get_current_admin), db: Session =
     total_citizens = db.query(Citizen).count()
 
     themes = db.query(Theme).order_by(Theme.sort_order).all()
-    per_theme = []
-    for t in themes:
-        q_ids = [q.id for q in db.query(Question.id).filter(Question.theme_id == t.id).all()]
-        count = db.query(Response).filter(
-            Response.question_id.in_(q_ids),
-            Response.is_followup == False,
-            Response.is_excluded == False,
-        ).count() if q_ids else 0
-        per_theme.append({"theme_id": t.id, "name": t.name, "icon": t.icon, "count": count})
+    # Ét JOIN-query for response-count pr. tema i stedet for loop med N×2 queries
+    theme_counts_q = (
+        db.query(Theme.id, func.count(Response.id))
+        .join(Question, Question.theme_id == Theme.id)
+        .join(Response, Response.question_id == Question.id)
+        .filter(Response.is_followup == False, Response.is_excluded == False)
+    )
+    if frozen_ids:
+        theme_counts_q = theme_counts_q.filter(~Response.citizen_id.in_(frozen_ids))
+    theme_counts = dict(theme_counts_q.group_by(Theme.id).all())
+    per_theme = [
+        {"theme_id": t.id, "name": t.name, "icon": t.icon, "count": theme_counts.get(t.id, 0)}
+        for t in themes
+    ]
 
     age_dist = db.query(ResponseMetadata.age_group, func.count(ResponseMetadata.id)).filter(
         ResponseMetadata.age_group.isnot(None)
@@ -452,9 +480,12 @@ def admin_run_analysis(data: AnalysisRequest, admin: AdminUser = Depends(get_cur
     if len(texts) < 3:
         raise HTTPException(400, "Mindst 3 tekstbesvarelser krævet for analyse")
 
-    result = generate_analysis(texts, data.analysis_type)
-    if result is None:
-        raise HTTPException(500, "Analyse fejlede")
+    try:
+        result = generate_analysis(texts, data.analysis_type)
+    except Exception as e:
+        raise HTTPException(500, f"AI-analyse fejlede: {e}")
+    if not result:
+        raise HTTPException(500, "AI returnerede tomt resultat")
 
     cache = AnalysisCache(
         id=str(uuid.uuid4()),
@@ -592,17 +623,22 @@ def admin_search_citizens(
     if q:
         query = query.filter(Citizen.email.ilike(f"%{q}%"))
     citizens = query.order_by(Citizen.created_at.desc()).limit(limit).all()
-    result = []
-    for c in citizens:
-        response_count = db.query(Response).filter(
-            Response.citizen_id == c.id,
-            Response.is_followup == False,
-        ).count()
-        result.append({
+    # Ét GROUP BY-query for response-count pr. borger i stedet for N queries
+    cit_ids = [c.id for c in citizens]
+    counts = dict(
+        db.query(Response.citizen_id, func.count(Response.id))
+        .filter(Response.citizen_id.in_(cit_ids), Response.is_followup == False)
+        .group_by(Response.citizen_id)
+        .all()
+    ) if cit_ids else {}
+    result = [
+        {
             **citizen_dict(c),
-            "response_count": response_count,
+            "response_count": counts.get(c.id, 0),
             "temp_password_expires": c.temp_password_expires.isoformat() if c.temp_password_expires else None,
-        })
+        }
+        for c in citizens
+    ]
     return result
 
 

@@ -93,11 +93,14 @@ def submit_response(
 
     if is_flagged and not data.is_followup:
         question = db.query(Question).filter(Question.id == data.question_id).first()
-        notify_flagged_response(
-            question_title=question.title if question else data.question_id,
-            response_text=data.text_content or "",
-            citizen_email=citizen.email if citizen else "Anonym",
-        )
+        try:
+            notify_flagged_response(
+                question_title=question.title if question else data.question_id,
+                response_text=data.text_content or "",
+                citizen_email=citizen.email if citizen else "Anonym",
+            )
+        except Exception as e:
+            print(f"[Email] notify_flagged_response fejlede: {e}")
 
     return response_dict(response)
 
@@ -144,37 +147,46 @@ async def submit_audio_response(
         f.write(contents)
 
     try:
-        text = transcribe_file(filepath)
-    except Exception as e:
-        print(f"Transcription error: {e}")
-        text = "[Transskribering fejlede]"
+        try:
+            text = transcribe_file(filepath)
+        except Exception as e:
+            print(f"Transcription error: {e}")
+            text = "[Transskribering fejlede]"
 
-    is_flagged = check_moderation(text, db) if not is_followup else False
+        is_flagged = check_moderation(text, db) if not is_followup else False
 
-    response = Response(
-        id=str(uuid.uuid4()),
-        question_id=question_id,
-        citizen_id=citizen.id if citizen else None,
-        session_id=session_id,
-        response_type="audio",
-        text_content=text,
-        audio_file_path=filepath,
-        is_followup=is_followup,
-        parent_response_id=parent_response_id,
-        followup_question_text=followup_question_text,
-        is_flagged=is_flagged,
-    )
-    db.add(response)
-    db.commit()
-    db.refresh(response)
+        response = Response(
+            id=str(uuid.uuid4()),
+            question_id=question_id,
+            citizen_id=citizen.id if citizen else None,
+            session_id=session_id,
+            response_type="audio",
+            text_content=text,
+            audio_file_path=filepath,
+            is_followup=is_followup,
+            parent_response_id=parent_response_id,
+            followup_question_text=followup_question_text,
+            is_flagged=is_flagged,
+        )
+        db.add(response)
+        db.commit()
+        db.refresh(response)
+    except Exception:
+        # Slet lydfilen hvis DB-operationen fejler for at undgå disk-leak
+        if os.path.exists(filepath):
+            os.remove(filepath)
+        raise
 
     if is_flagged and not is_followup:
         question = db.query(Question).filter(Question.id == question_id).first()
-        notify_flagged_response(
-            question_title=question.title if question else question_id,
-            response_text=text or "",
-            citizen_email=citizen.email if citizen else "Anonym",
-        )
+        try:
+            notify_flagged_response(
+                question_title=question.title if question else question_id,
+                response_text=text or "",
+                citizen_email=citizen.email if citizen else "Anonym",
+            )
+        except Exception as e:
+            print(f"[Email] notify_flagged_response fejlede: {e}")
 
     return {**response_dict(response), "transcription": text}
 
@@ -212,18 +224,26 @@ def get_followup_question(data: FollowupRequest, db: Session = Depends(get_db)):
     ).all()
     other_texts = [r.text_content for r in other_texts if r.text_content and not r.text_content.startswith("[")]
 
-    followup = generate_followup(
-        answer=data.answer,
-        question_text=data.question_text,
-        theme_name=data.theme_name,
-        system_prompt=system_prompt,
-        other_perspectives=other_texts,
-        perspective_threshold=threshold,
-    )
+    try:
+        followup = generate_followup(
+            answer=data.answer,
+            question_text=data.question_text,
+            theme_name=data.theme_name,
+            system_prompt=system_prompt,
+            other_perspectives=other_texts,
+            perspective_threshold=threshold,
+        )
+    except Exception as e:
+        print(f"[AI] generate_followup fejlede: {e}")
+        followup = None
     return {"followup_question": followup}
 
 
 @router.get("/health")
 def health():
     from ai_service import check_ollama_health
-    return {"status": "ok", "version": "1.0.0", "ai": check_ollama_health()}
+    try:
+        ai_status = check_ollama_health()
+    except Exception as e:
+        ai_status = {"ollama": "error", "error": str(e)}
+    return {"status": "ok", "version": "1.0.0", "ai": ai_status}
