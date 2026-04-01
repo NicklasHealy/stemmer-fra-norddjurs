@@ -4,9 +4,8 @@ import uuid
 from datetime import datetime
 from sqlalchemy import (
     Column, String, Text, Boolean, Integer, Float, DateTime,
-    ForeignKey, Enum as SAEnum, JSON
+    ForeignKey, Index, Enum as SAEnum, JSON
 )
-from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from database import Base
 
@@ -46,12 +45,15 @@ class Forloeb(Base):
 
 class Theme(Base):
     __tablename__ = "themes"
+    __table_args__ = (
+        Index("ix_theme_forloeb_id", "forloeb_id"),
+    )
 
     id = Column(String, primary_key=True, default=new_uuid)
     name = Column(String(200), nullable=False)
     icon = Column(String(10), default="📋")
     sort_order = Column(Integer, default=0)
-    forloeb_id = Column(String, ForeignKey("forloeb.id"), nullable=True)   # nyt
+    forloeb_id = Column(String, ForeignKey("forloeb.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     questions = relationship("Question", back_populates="theme")
@@ -60,20 +62,24 @@ class Theme(Base):
 
 class Question(Base):
     __tablename__ = "questions"
+    __table_args__ = (
+        Index("ix_question_theme_id", "theme_id"),
+        Index("ix_question_forloeb_id", "forloeb_id"),
+    )
 
     id = Column(String, primary_key=True, default=new_uuid)
-    theme_id = Column(String, ForeignKey("themes.id"), nullable=True)      # nullable nu
-    forloeb_id = Column(String, ForeignKey("forloeb.id"), nullable=True)   # nyt — bruges i questions-mode
+    theme_id = Column(String, ForeignKey("themes.id"), nullable=True)
+    forloeb_id = Column(String, ForeignKey("forloeb.id"), nullable=True)
     title = Column(String(300), nullable=False)
     body = Column(Text, nullable=False)
     is_active = Column(Boolean, default=True)
     allow_followup = Column(Boolean, default=True)
     followup_prompt = Column(Text, default="")
     sort_order = Column(Integer, default=0)
-    is_citizen_submitted = Column(Boolean, default=False)                   # nyt
-    submitted_by_citizen_id = Column(String, ForeignKey("citizens.id", ondelete="SET NULL"), nullable=True)  # nyt
-    is_approved = Column(Boolean, default=True)                            # nyt — godkendelsesstatus for borgerspørgsmål
-    is_anonymous = Column(Boolean, default=False)                          # nyt — borger ønsker anonymitet
+    is_citizen_submitted = Column(Boolean, default=False)
+    submitted_by_citizen_id = Column(String, ForeignKey("citizens.id", ondelete="SET NULL"), nullable=True)
+    is_approved = Column(Boolean, default=True)
+    is_anonymous = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -91,10 +97,10 @@ class Citizen(Base):
     password_hash = Column(String(200), nullable=False)
     consent_given = Column(Boolean, default=False)
     consent_given_at = Column(DateTime, nullable=True)
-    consent_version = Column(Integer, default=1, nullable=False)       # opgave 14b
-    frozen = Column(Boolean, default=False, nullable=False)             # opgave 13b
-    must_change_password = Column(Boolean, default=False, nullable=False)  # tvungen kodeordsskift
-    temp_password_expires = Column(DateTime, nullable=True)             # udløbstid for midlertidig kode
+    consent_version = Column(Integer, default=1, nullable=False)
+    frozen = Column(Boolean, default=False, nullable=False)
+    must_change_password = Column(Boolean, default=False, nullable=False)
+    temp_password_expires = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     responses = relationship("Response", back_populates="citizen", cascade="all, delete-orphan")
@@ -104,6 +110,11 @@ class Citizen(Base):
 
 class Response(Base):
     __tablename__ = "responses"
+    __table_args__ = (
+        Index("ix_response_citizen_id", "citizen_id"),
+        Index("ix_response_question_id", "question_id"),
+        Index("ix_response_created_at", "created_at"),
+    )
 
     id = Column(String, primary_key=True, default=new_uuid)
     question_id = Column(String, ForeignKey("questions.id"), nullable=False)
@@ -116,8 +127,8 @@ class Response(Base):
     is_followup = Column(Boolean, default=False)
     parent_response_id = Column(String, ForeignKey("responses.id"), nullable=True)
     followup_question_text = Column(Text, nullable=True)
-    is_excluded = Column(Boolean, default=False)   # Admin soft-delete (opgave 8a)
-    is_flagged = Column(Boolean, default=False)    # Indholdsmoderation (opgave 8c)
+    is_excluded = Column(Boolean, default=False, index=True)
+    is_flagged = Column(Boolean, default=False, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     question = relationship("Question", back_populates="responses")
@@ -145,6 +156,10 @@ class ResponseMetadata(Base):
 
 class AnalysisCache(Base):
     __tablename__ = "analysis_cache"
+    __table_args__ = (
+        Index("ix_analysis_cache_question_id", "question_id"),
+        Index("ix_analysis_cache_theme_id", "theme_id"),
+    )
 
     id = Column(String, primary_key=True, default=new_uuid)
     question_id = Column(String, ForeignKey("questions.id"), nullable=True)
@@ -194,12 +209,11 @@ class ModerationRule(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
-# Opgave 14a: Log over samtykker
 class ConsentLog(Base):
     __tablename__ = "consent_logs"
 
     id = Column(String, primary_key=True, default=new_uuid)
-    citizen_id = Column(String, ForeignKey("citizens.id", ondelete="CASCADE"), nullable=False)
+    citizen_id = Column(String, ForeignKey("citizens.id", ondelete="CASCADE"), nullable=False, index=True)
     consent_given = Column(Boolean, nullable=False)
     consent_version = Column(Integer, nullable=False, default=1)
     ip_address = Column(String(45), nullable=True)
@@ -208,13 +222,12 @@ class ConsentLog(Base):
     citizen = relationship("Citizen", back_populates="consent_logs")
 
 
-# Audit-log: admin-nulstillinger af adgangskoder
 class PasswordResetLog(Base):
     __tablename__ = "password_reset_log"
 
     id = Column(String, primary_key=True, default=new_uuid)
     admin_user_id = Column(String, ForeignKey("admin_users.id"), nullable=False)
-    target_citizen_id = Column(String, ForeignKey("citizens.id", ondelete="CASCADE"), nullable=False)
+    target_citizen_id = Column(String, ForeignKey("citizens.id", ondelete="CASCADE"), nullable=False, index=True)
     reset_at = Column(DateTime, default=datetime.utcnow)
     temp_password_expires = Column(DateTime, nullable=False)
 

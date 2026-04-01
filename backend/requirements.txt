@@ -6,6 +6,7 @@ slowapi>=0.1.9             # Rate limiting (brug: @limiter.limit("10/minute"))
 
 # ─── Database ───
 sqlalchemy==2.0.35
+alembic>=1.13.0        # Database-migrationer med versionshistorik og rollback
 pyodbc>=5.0.0          # SQL Server i produktion (kræver ODBC Driver 18 for SQL Server)
 
 # ─── Auth ───
