@@ -297,7 +297,7 @@ const DonutChart = ({ data, size = 160 }) => {
 // ═══════════════════════════════════════════════
 
 const CitizenFlow = ({ onAdminClick }) => {
-  // Steps: 0=welcome, 1=theme, 2=question, 3=auth, 4=consent, 5=followup, 6=metadata, 7=thanks, 8=profile, 9=privacy-policy, 10=change-password
+  // Steps: 0=welcome, 1=theme, 2=question, 3=auth, 4=consent, 5=followup, 6=metadata, 7=thanks, 8=profile, 9=privacy-policy, 10=change-password, 11=om-platformen
   const [step, setStep] = useState(0);
   const [citizenToken, setCitizenToken] = useState(() => localStorage.getItem("citizenToken"));
   const [citizen, setCitizen] = useState(() => { try { return JSON.parse(localStorage.getItem("citizen")); } catch { return null; } });
@@ -334,6 +334,7 @@ const CitizenFlow = ({ onAdminClick }) => {
   const [inputMode, setInputMode] = useState("text");
   const [followupInputMode, setFollowupInputMode] = useState("text");
   const [profileConfirmDelete, setProfileConfirmDelete] = useState(false);
+  const [profileTab, setProfileTab] = useState("info");
   const [consentExpanded, setConsentExpanded] = useState(false);
   const [privacyPolicyText, setPrivacyPolicyText] = useState(null);
   const [citizenFrozen, setCitizenFrozen] = useState(false);
@@ -628,6 +629,9 @@ const CitizenFlow = ({ onAdminClick }) => {
 
   const currentQuestion = themeQuestions[questionIndex] || null;
   const answeredQuestionIds = new Set(myResponses.filter(r => !r.is_followup).map(r => r.question_id));
+  const answeredCountPerTheme = myResponses
+    .filter(r => !r.is_followup && r.theme)
+    .reduce((map, r) => map.set(r.theme.id, (map.get(r.theme.id) || 0) + 1), new Map());
 
   const goToNextQuestion = () => {
     setAnswer(""); setAudioBlob(null); setAnswerType("text"); setInputMode("text");
@@ -745,7 +749,8 @@ const CitizenFlow = ({ onAdminClick }) => {
         <h1 style={{ fontSize: 28, fontWeight: 700, marginBottom: 12, lineHeight: 1.2 }}>Stemmer fra Norddjurs</h1>
         <p style={{ fontSize: 17, color: "var(--muted)", lineHeight: 1.6, maxWidth: 340, marginBottom: 40 }}>Vi vil gerne høre din holdning til kommunens prioriteringer. Det tager kun 2-4 minutter.</p>
         <button onClick={() => setStep(1)} style={bp}>Kom i gang</button>
-        <button onClick={onAdminClick} style={{ marginTop: 40, background: "none", border: "none", color: "var(--muted)", fontSize: 13, cursor: "pointer", fontFamily: "DM Sans", opacity: 0.5 }}>Admin</button>
+        <button onClick={() => { prevStep.current = 0; setStep(11); }} style={{ marginTop: 16, background: "none", border: "none", color: "var(--primary)", fontSize: 14, cursor: "pointer", fontFamily: "DM Sans", fontWeight: 500, textDecoration: "underline", textDecorationColor: "var(--primary)", textUnderlineOffset: 3 }}>Om platformen</button>
+        <button onClick={onAdminClick} style={{ marginTop: 24, background: "none", border: "none", color: "var(--muted)", fontSize: 13, cursor: "pointer", fontFamily: "DM Sans", opacity: 0.5 }}>Admin</button>
       </div>
     </div>
   );
@@ -841,7 +846,26 @@ const CitizenFlow = ({ onAdminClick }) => {
                 <span style={{ fontSize: 32 }}>{theme.icon}</span>
                 <div>
                   <div style={{ fontWeight: 600, fontSize: 16, fontFamily: "DM Sans" }}>{theme.name}</div>
-                  <div style={{ fontSize: 13, color: "var(--muted)", marginTop: 2, fontFamily: "DM Sans" }}>{qCount} aktive spørgsmål</div>
+                  {(() => {
+                    const answered = answeredCountPerTheme.get(theme.id) || 0;
+                    const allDone = answered >= qCount && qCount > 0;
+                    return (
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 2 }}>
+                        <span style={{ fontSize: 13, color: allDone ? "var(--success)" : "var(--muted)", fontFamily: "DM Sans" }}>
+                          {answered > 0
+                            ? allDone
+                              ? `✓ Alle ${qCount} besvaret`
+                              : `${answered}/${qCount} besvaret`
+                            : `${qCount} spørgsmål`}
+                        </span>
+                        {answered > 0 && !allDone && (
+                          <div style={{ flex: 1, height: 4, background: "var(--border)", borderRadius: 2, overflow: "hidden", maxWidth: 60 }}>
+                            <div style={{ width: `${(answered / qCount) * 100}%`, height: "100%", background: "var(--primary)", borderRadius: 2 }} />
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
               </button>
             );
@@ -971,6 +995,19 @@ const CitizenFlow = ({ onAdminClick }) => {
           <button onClick={authMode === "login" ? handleLogin : handleRegister} disabled={loading} style={{ ...bp, opacity: loading ? 0.6 : 1 }}>
             {loading ? "Vent..." : (authMode === "login" ? "Log ind" : "Opret konto")}
           </button>
+          {authMode === "register" && (
+            <div style={{ marginTop: 14, padding: "12px 16px", background: "var(--primary-pale)", borderRadius: 12, border: "1px solid var(--primary)" }}>
+              <p style={{ fontSize: 13, color: "var(--fg)", lineHeight: 1.6 }}>
+                Vi er forpligtet til at du til enhver tid kan se, downloade, ændre eller slette din data. Derfor er det nødvendigt at du opretter en konto.{" "}
+                <button
+                  onClick={() => { prevStep.current = 3; setStep(9); }}
+                  style={{ background: "none", border: "none", color: "var(--primary)", fontFamily: "DM Sans", fontSize: 13, fontWeight: 600, cursor: "pointer", padding: 0, textDecoration: "underline", textUnderlineOffset: 3 }}
+                >
+                  Læs privatlivspolitikken
+                </button>
+              </p>
+            </div>
+          )}
           <button onClick={() => { setAuthMode(authMode === "login" ? "register" : "login"); setAuthError(""); }}
             style={{ marginTop: 16, background: "none", border: "none", color: "var(--primary)", fontSize: 15, cursor: "pointer", fontFamily: "DM Sans", fontWeight: 500 }}>
             {authMode === "login" ? "Har du ikke en konto? Opret én her" : "Har du allerede en konto? Log ind"}
@@ -1294,9 +1331,52 @@ const CitizenFlow = ({ onAdminClick }) => {
     </div>
   );
 
+  // ── Step 11: Om platformen ──
+  if (step === 11) return (
+    <div style={cs} className="fade-in">
+      <TopBar onBack={() => setStep(prevStep.current || 0)} backLabel="Tilbage" />
+      <div style={{ flex: 1 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 24 }}>
+          <div style={{ width: 48, height: 48, borderRadius: 12, background: "var(--primary)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+            <span style={{ fontSize: 22 }}>🗣️</span>
+          </div>
+          <h2 style={{ fontSize: 22, fontWeight: 700, lineHeight: 1.2 }}>Om platformen</h2>
+        </div>
+        <div style={{ background: "var(--card)", borderRadius: 16, padding: "24px 20px", border: "1px solid var(--border)", lineHeight: 1.8, fontSize: 15, color: "var(--fg)" }}>
+          <p style={{ marginBottom: 16 }}>
+            I Norddjurs Kommune tror vi på, at de bedste beslutninger træffes, når de bygger på det, borgerne faktisk oplever og prioriterer. Budgettet er et af kommunens vigtigste redskaber – og det bør afspejle de mennesker, det er til for.
+          </p>
+          <p style={{ marginBottom: 16 }}>
+            Derfor har vi skabt denne platform. Vi vil gerne høre fra dig – om din hverdag, dine oplevelser med kommunens tilbud, og hvad der betyder mest for dig og din familie.
+          </p>
+          <p style={{ marginBottom: 16 }}>
+            Du starter med at vælge et emne, der optager dig, og derfra stiller vi dig nogle spørgsmål. Du svarer med dine egne ord – enten ved at skrive eller tale. Undervejs lytter vi til det, du fortæller, og spørger lidt dybere ind, så vi virkelig forstår, hvad du mener. Tænk på det som en samtale, hvor der er plads til at uddybe og nuancere.
+          </p>
+          <p style={{ marginBottom: 0 }}>
+            Det du deler, bringer vi videre til kommunens politikere. For din stemme skal ikke bare høres – den skal kunne spores helt ind i de beslutninger, der former Norddjurs.
+          </p>
+        </div>
+        <div style={{ marginTop: 20, padding: "16px 20px", background: "var(--primary-pale)", borderRadius: 14, border: "1px solid var(--primary)", display: "flex", gap: 12, alignItems: "flex-start" }}>
+          <span style={{ fontSize: 20, flexShrink: 0, marginTop: 2 }}>🏛️</span>
+          <div>
+            <p style={{ fontSize: 13, fontWeight: 600, color: "var(--primary)", marginBottom: 4 }}>Bag platformen</p>
+            <p style={{ fontSize: 13, color: "var(--fg)", lineHeight: 1.6 }}>Platformen er udviklet af og for Norddjurs Kommune som led i arbejdet med Budget 2027.</p>
+          </div>
+        </div>
+        <button onClick={() => setStep(1)} style={{ ...bp, marginTop: 24 }}>Kom i gang</button>
+      </div>
+    </div>
+  );
+
   // ── Step 8: Profile ──
   if (step === 8 && citizen) {
     const mainResponses = myResponses.filter(r => !r.is_followup);
+    const missingInfo = !metaAge || !metaArea || (metaArea === "Andet" && !customArea.trim());
+    const profileTabs = [
+      { id: "info", label: "Oplysninger", warn: missingInfo },
+      { id: "responses", label: "Mine besvarelser" },
+      { id: "privacy", label: "Data & privatliv" },
+    ];
     return (
       <div style={cs} className="fade-in">
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
@@ -1304,157 +1384,205 @@ const CitizenFlow = ({ onAdminClick }) => {
           <button onClick={handleLogout} style={{ background: "none", border: "1px solid var(--border)", borderRadius: 10, padding: "6px 14px", cursor: "pointer", fontFamily: "DM Sans", fontSize: 13, color: "var(--muted)" }}>Log ud</button>
         </div>
         <h2 style={{ fontSize: 24, fontWeight: 700, marginBottom: 4 }}>Min profil</h2>
-        <p style={{ fontSize: 14, color: "var(--muted)", marginBottom: 28 }}>{citizen.email}</p>
+        <p style={{ fontSize: 14, color: "var(--muted)", marginBottom: 20 }}>{citizen.email}</p>
 
-        {/* Metadata */}
-        <div style={{ background: "var(--card)", borderRadius: 16, padding: 20, border: "1px solid var(--border)", marginBottom: 20 }}>
-          <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 16 }}>Mine oplysninger</h3>
-          <div style={{ marginBottom: 14 }}>
-            <label style={{ display: "block", fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Aldersgruppe</label>
-            <select value={metaAge} onChange={e => setMetaAge(e.target.value)} style={{ width: "100%", padding: 12, borderRadius: 10, border: "1px solid var(--border)", fontSize: 15, background: "var(--bg)" }}>
-              <option value="">Ikke angivet</option>
-              {AGE_GROUPS.map(o => <option key={o} value={o}>{o}</option>)}
-            </select>
+        {/* Tab navigation */}
+        <div style={{ display: "flex", borderBottom: "2px solid var(--border)", marginBottom: 24 }}>
+          {profileTabs.map(t => (
+            <button key={t.id} onClick={() => setProfileTab(t.id)}
+              style={{
+                position: "relative", padding: "10px 14px", background: "none", border: "none",
+                cursor: "pointer", fontFamily: "DM Sans", fontSize: 14,
+                fontWeight: profileTab === t.id ? 700 : 400,
+                color: profileTab === t.id ? "var(--primary)" : "var(--muted)",
+                borderBottom: profileTab === t.id ? "2px solid var(--primary)" : "2px solid transparent",
+                marginBottom: -2, transition: "all 0.15s", whiteSpace: "nowrap",
+              }}>
+              {t.label}
+              {t.warn && (
+                <span style={{
+                  position: "absolute", top: 6, right: 2,
+                  width: 8, height: 8, borderRadius: "50%",
+                  background: "var(--accent)", border: "2px solid var(--bg)",
+                }} />
+              )}
+            </button>
+          ))}
+        </div>
+
+        {/* Tab: Oplysninger */}
+        {profileTab === "info" && (
+          <div>
+            {missingInfo && (
+              <div style={{ padding: "10px 14px", background: "#FFF7ED", borderRadius: 10, border: "1px solid var(--accent-light)", marginBottom: 16, display: "flex", gap: 8, alignItems: "flex-start" }}>
+                <span style={{ fontSize: 16, flexShrink: 0 }}>⚠️</span>
+                <p style={{ fontSize: 13, color: "var(--accent)", lineHeight: 1.5 }}>
+                  Dine oplysninger er ikke udfyldt. Udfyld aldersgruppe og område for at hjælpe os forstå, hvem der svarer.
+                </p>
+              </div>
+            )}
+            <div style={{ background: "var(--card)", borderRadius: 16, padding: 20, border: "1px solid var(--border)" }}>
+              <div style={{ marginBottom: 14 }}>
+                <label style={{ display: "block", fontSize: 13, fontWeight: 600, marginBottom: 4 }}>
+                  Aldersgruppe
+                  {!metaAge && <span style={{ marginLeft: 6, fontSize: 11, color: "var(--accent)", fontWeight: 500 }}>Mangler</span>}
+                </label>
+                <select value={metaAge} onChange={e => setMetaAge(e.target.value)} style={{ width: "100%", padding: 12, borderRadius: 10, border: `1px solid ${!metaAge ? "var(--accent)" : "var(--border)"}`, fontSize: 15, background: "var(--bg)" }}>
+                  <option value="">Ikke angivet</option>
+                  {AGE_GROUPS.map(o => <option key={o} value={o}>{o}</option>)}
+                </select>
+              </div>
+              <div style={{ marginBottom: 14 }}>
+                <label style={{ display: "block", fontSize: 13, fontWeight: 600, marginBottom: 4 }}>
+                  Område
+                  {!metaArea && <span style={{ marginLeft: 6, fontSize: 11, color: "var(--accent)", fontWeight: 500 }}>Mangler</span>}
+                </label>
+                <select value={metaArea} onChange={e => { setMetaArea(e.target.value); if (e.target.value !== "Andet") setCustomArea(""); }} style={{ width: "100%", padding: 12, borderRadius: 10, border: `1px solid ${!metaArea ? "var(--accent)" : "var(--border)"}`, fontSize: 15, background: "var(--bg)" }}>
+                  <option value="">Ikke angivet</option>
+                  {areas.map(o => <option key={o} value={o}>{o}</option>)}
+                  <option value="Andet">Andet</option>
+                </select>
+                {metaArea === "Andet" && (
+                  <input
+                    type="text"
+                    value={customArea}
+                    onChange={e => setCustomArea(e.target.value)}
+                    placeholder="Skriv din by"
+                    style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid var(--border)", fontSize: 15, outline: "none", marginTop: 8, background: "var(--bg)" }}
+                  />
+                )}
+              </div>
+              <button onClick={handleSaveMetadata} style={{ padding: "12px 20px", borderRadius: 10, border: "none", background: "var(--primary)", color: "#fff", cursor: "pointer", fontFamily: "DM Sans", fontSize: 14, fontWeight: 600, marginTop: 4 }}>
+                {metaSaved ? "✓ Gemt!" : "Gem ændringer"}
+              </button>
+            </div>
           </div>
-          <div style={{ marginBottom: 14 }}>
-            <label style={{ display: "block", fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Område</label>
-            <select value={metaArea} onChange={e => { setMetaArea(e.target.value); if (e.target.value !== "Andet") setCustomArea(""); }} style={{ width: "100%", padding: 12, borderRadius: 10, border: "1px solid var(--border)", fontSize: 15, background: "var(--bg)" }}>
-              <option value="">Ikke angivet</option>
-              {areas.map(o => <option key={o} value={o}>{o}</option>)}
-              <option value="Andet">Andet</option>
-            </select>
-            {metaArea === "Andet" && (
-              <input
-                type="text"
-                value={customArea}
-                onChange={e => setCustomArea(e.target.value)}
-                placeholder="Skriv din by"
-                style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid var(--border)", fontSize: 15, outline: "none", marginTop: 8, background: "var(--bg)" }}
-              />
+        )}
+
+        {/* Tab: Mine besvarelser */}
+        {profileTab === "responses" && (
+          <div style={{ background: "var(--card)", borderRadius: 16, padding: 20, border: "1px solid var(--border)" }}>
+            <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 12 }}>Mine besvarelser ({mainResponses.length})</h3>
+            {mainResponses.length === 0 ? (
+              <p style={{ fontSize: 14, color: "var(--muted)" }}>Du har ikke besvaret nogen spørgsmål endnu.</p>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {mainResponses.map(r => {
+                  const q = r.question;
+                  const t = r.theme;
+                  const followup = r.followup_response;
+                  return (
+                    <div key={r.id} style={{ padding: 14, background: "var(--bg)", borderRadius: 10 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4 }}>
+                        <div style={{ fontSize: 12, color: "var(--primary)", fontWeight: 500 }}>{t?.icon} {t?.name} — {fmt(r.created_at)}</div>
+                        <button onClick={() => handleDeleteSingleResponse(r.id)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 13, color: "var(--danger)", padding: "0 4px", fontFamily: "DM Sans", flexShrink: 0 }}>Slet</button>
+                      </div>
+                      <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 4 }}>{q?.body}</div>
+                      <div style={{ fontSize: 14 }}>{r.text_content}</div>
+                      {followup && (
+                        <div style={{ borderLeft: "3px solid var(--accent)", paddingLeft: 10, marginTop: 8 }}>
+                          <div style={{ fontSize: 12, color: "var(--accent)", fontWeight: 500 }}>{followup.followup_question_text}</div>
+                          <div style={{ fontSize: 13, marginTop: 2 }}>{followup.text_content}</div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             )}
           </div>
-          <button onClick={handleSaveMetadata} style={{ padding: "12px 20px", borderRadius: 10, border: "none", background: "var(--primary)", color: "#fff", cursor: "pointer", fontFamily: "DM Sans", fontSize: 14, fontWeight: 600, marginTop: 4 }}>
-            {metaSaved ? "✓ Gemt!" : "Gem ændringer"}
-          </button>
-        </div>
+        )}
 
-        {/* My responses */}
-        <div style={{ background: "var(--card)", borderRadius: 16, padding: 20, border: "1px solid var(--border)", marginBottom: 20 }}>
-          <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 12 }}>Mine besvarelser ({mainResponses.length})</h3>
-          {mainResponses.length === 0 ? (
-            <p style={{ fontSize: 14, color: "var(--muted)" }}>Du har ikke besvaret nogen spørgsmål endnu.</p>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {mainResponses.map(r => {
-                const q = r.question;
-                const t = r.theme;
-                const followup = r.followup_response;
-                return (
-                  <div key={r.id} style={{ padding: 14, background: "var(--bg)", borderRadius: 10 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4 }}>
-                      <div style={{ fontSize: 12, color: "var(--primary)", fontWeight: 500 }}>{t?.icon} {t?.name} — {fmt(r.created_at)}</div>
-                      <button onClick={() => handleDeleteSingleResponse(r.id)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 13, color: "var(--danger)", padding: "0 4px", fontFamily: "DM Sans", flexShrink: 0 }}>Slet</button>
-                    </div>
-                    <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 4 }}>{q?.body}</div>
-                    <div style={{ fontSize: 14 }}>{r.text_content}</div>
-                    {followup && (
-                      <div style={{ borderLeft: "3px solid var(--accent)", paddingLeft: 10, marginTop: 8 }}>
-                        <div style={{ fontSize: 12, color: "var(--accent)", fontWeight: 500 }}>{followup.followup_question_text}</div>
-                        <div style={{ fontSize: 13, marginTop: 2 }}>{followup.text_content}</div>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
+        {/* Tab: Data & privatliv */}
+        {profileTab === "privacy" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            {/* Download */}
+            <div style={{ background: "var(--card)", borderRadius: 16, padding: 20, border: "1px solid var(--border)" }}>
+              <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 6 }}>Download mine data</h3>
+              <p style={{ fontSize: 14, color: "var(--muted)", lineHeight: 1.6, marginBottom: 12 }}>Download alle dine besvarelser og oplysninger som en JSON-fil (GDPR artikel 20 — dataportabilitet).</p>
+              <button
+                onClick={async () => {
+                  const res = await apiFetch("/api/citizen/export", {}, citizenToken);
+                  if (res.ok) {
+                    const data = await res.json();
+                    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = "mine-data-norddjurs.json";
+                    a.click();
+                    URL.revokeObjectURL(url);
+                  }
+                }}
+                style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 20px", borderRadius: 10, border: "1px solid var(--primary)", background: "var(--primary-pale)", color: "var(--primary)", cursor: "pointer", fontFamily: "DM Sans", fontSize: 14, fontWeight: 600 }}
+              >
+                <Icon name="download" size={18} color="var(--primary)" /> Download mine data (JSON)
+              </button>
             </div>
-          )}
-        </div>
 
-        {/* Opgave 13a: Download mine data */}
-        <div style={{ background: "var(--card)", borderRadius: 16, padding: 20, border: "1px solid var(--border)", marginBottom: 16 }}>
-          <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 6 }}>Download mine data</h3>
-          <p style={{ fontSize: 14, color: "var(--muted)", lineHeight: 1.6, marginBottom: 12 }}>Download alle dine besvarelser og oplysninger som en JSON-fil (GDPR artikel 20 — dataportabilitet).</p>
-          <button
-            onClick={async () => {
-              const res = await apiFetch("/api/citizen/export", {}, citizenToken);
-              if (res.ok) {
-                const data = await res.json();
-                const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement("a");
-                a.href = url;
-                a.download = "mine-data-norddjurs.json";
-                a.click();
-                URL.revokeObjectURL(url);
-              }
-            }}
-            style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 20px", borderRadius: 10, border: "1px solid var(--primary)", background: "var(--primary-pale)", color: "var(--primary)", cursor: "pointer", fontFamily: "DM Sans", fontSize: 14, fontWeight: 600 }}
-          >
-            <Icon name="download" size={18} color="var(--primary)" /> Download mine data (JSON)
-          </button>
-        </div>
+            {/* Frys */}
+            <div style={{ background: "var(--card)", borderRadius: 16, padding: 20, border: "1px solid var(--border)" }}>
+              <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 6 }}>
+                {citizenFrozen ? "Dine data er frosset" : "Frys mine data"}
+              </h3>
+              <p style={{ fontSize: 14, color: "var(--muted)", lineHeight: 1.6, marginBottom: 12 }}>
+                {citizenFrozen
+                  ? "Dine besvarelser indgår ikke i analyser eller AI-opfølgninger, mens dine data er frosset. Du kan til enhver tid ophæve frysningen."
+                  : "Dine besvarelser bevares, men ekskluderes fra dashboard, analyse og AI-perspektiver (GDPR artikel 18 — ret til begrænsning)."}
+              </p>
+              <button
+                onClick={async () => {
+                  const res = await apiFetch("/api/citizen/freeze", { method: "PUT" }, citizenToken);
+                  if (res.ok) {
+                    const data = await res.json();
+                    setCitizenFrozen(data.frozen);
+                  }
+                }}
+                style={{ padding: "12px 20px", borderRadius: 10, border: `1px solid ${citizenFrozen ? "var(--success)" : "var(--muted)"}`, background: citizenFrozen ? "#F0FFF4" : "var(--bg)", color: citizenFrozen ? "var(--success)" : "var(--muted)", cursor: "pointer", fontFamily: "DM Sans", fontSize: 14, fontWeight: 600 }}
+              >
+                {citizenFrozen ? "✓ Fjern frys" : "Frys mine data"}
+              </button>
+            </div>
 
-        {/* Opgave 13b: Frys mine data */}
-        <div style={{ background: "var(--card)", borderRadius: 16, padding: 20, border: "1px solid var(--border)", marginBottom: 16 }}>
-          <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 6 }}>
-            {citizenFrozen ? "Dine data er frosset" : "Frys mine data"}
-          </h3>
-          <p style={{ fontSize: 14, color: "var(--muted)", lineHeight: 1.6, marginBottom: 12 }}>
-            {citizenFrozen
-              ? "Dine besvarelser indgår ikke i analyser eller AI-opfølgninger, mens dine data er frosset. Du kan til enhver tid ophæve frysningen."
-              : "Dine besvarelser bevares, men ekskluderes fra dashboard, analyse og AI-perspektiver (GDPR artikel 18 — ret til begrænsning)."}
-          </p>
-          <button
-            onClick={async () => {
-              const res = await apiFetch("/api/citizen/freeze", { method: "PUT" }, citizenToken);
-              if (res.ok) {
-                const data = await res.json();
-                setCitizenFrozen(data.frozen);
-              }
-            }}
-            style={{ padding: "12px 20px", borderRadius: 10, border: `1px solid ${citizenFrozen ? "var(--success)" : "var(--muted)"}`, background: citizenFrozen ? "#F0FFF4" : "var(--bg)", color: citizenFrozen ? "var(--success)" : "var(--muted)", cursor: "pointer", fontFamily: "DM Sans", fontSize: 14, fontWeight: 600 }}
-          >
-            {citizenFrozen ? "✓ Fjern frys" : "Frys mine data"}
-          </button>
-        </div>
-
-        {/* Opgave 13c + 12: Links */}
-        <div style={{ background: "var(--card)", borderRadius: 16, padding: 20, border: "1px solid var(--border)", marginBottom: 16 }}>
-          <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 12 }}>Dine rettigheder</h3>
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            <button
-              onClick={() => { prevStep.current = 8; setStep(9); }}
-              style={{ display: "flex", alignItems: "center", gap: 8, background: "none", border: "none", color: "var(--primary)", fontSize: 14, cursor: "pointer", fontFamily: "DM Sans", fontWeight: 500, textAlign: "left", padding: 0 }}
-            >
-              📋 Læs privatlivspolitikken
-            </button>
-            <a
-              href="https://datatilsynet.dk"
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--primary)", fontSize: 14, fontFamily: "DM Sans", fontWeight: 500, textDecoration: "none" }}
-            >
-              🏛️ Klage til Datatilsynet (datatilsynet.dk)
-            </a>
-          </div>
-        </div>
-
-        {/* GDPR Delete */}
-        <div style={{ background: "#FEF2F2", borderRadius: 16, padding: 20, border: "1px solid #FECACA", marginBottom: 20 }}>
-          <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 8, color: "var(--danger)" }}>Træk samtykke tilbage</h3>
-          <p style={{ fontSize: 14, lineHeight: 1.6, marginBottom: 14 }}>Dette sletter permanent alle dine svar, lydoptagelser, metadata og din konto. Handlingen kan ikke fortrydes.</p>
-          {!profileConfirmDelete ? (
-            <button onClick={() => setProfileConfirmDelete(true)} style={{ padding: "12px 20px", borderRadius: 10, border: "2px solid var(--danger)", background: "transparent", color: "var(--danger)", cursor: "pointer", fontFamily: "DM Sans", fontSize: 14, fontWeight: 600 }}>Slet alle mine data</button>
-          ) : (
-            <div>
-              <p style={{ fontSize: 14, fontWeight: 600, color: "var(--danger)", marginBottom: 10 }}>Er du sikker? Al data slettes permanent.</p>
-              <div style={{ display: "flex", gap: 10 }}>
-                <button onClick={handleDeleteAllData} style={{ padding: "12px 20px", borderRadius: 10, border: "none", background: "var(--danger)", color: "#fff", cursor: "pointer", fontFamily: "DM Sans", fontSize: 14, fontWeight: 600 }}>Ja, slet alt</button>
-                <button onClick={() => setProfileConfirmDelete(false)} style={{ padding: "12px 20px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--card)", cursor: "pointer", fontFamily: "DM Sans", fontSize: 14 }}>Annuller</button>
+            {/* Rettigheder */}
+            <div style={{ background: "var(--card)", borderRadius: 16, padding: 20, border: "1px solid var(--border)" }}>
+              <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 12 }}>Dine rettigheder</h3>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <button
+                  onClick={() => { prevStep.current = 8; setStep(9); }}
+                  style={{ display: "flex", alignItems: "center", gap: 8, background: "none", border: "none", color: "var(--primary)", fontSize: 14, cursor: "pointer", fontFamily: "DM Sans", fontWeight: 500, textAlign: "left", padding: 0 }}
+                >
+                  📋 Læs privatlivspolitikken
+                </button>
+                <a
+                  href="https://datatilsynet.dk"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--primary)", fontSize: 14, fontFamily: "DM Sans", fontWeight: 500, textDecoration: "none" }}
+                >
+                  🏛️ Klage til Datatilsynet (datatilsynet.dk)
+                </a>
               </div>
             </div>
-          )}
-        </div>
+
+            {/* Slet */}
+            <div style={{ background: "#FEF2F2", borderRadius: 16, padding: 20, border: "1px solid #FECACA" }}>
+              <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 8, color: "var(--danger)" }}>Træk samtykke tilbage</h3>
+              <p style={{ fontSize: 14, lineHeight: 1.6, marginBottom: 14 }}>Dette sletter permanent alle dine svar, lydoptagelser, metadata og din konto. Handlingen kan ikke fortrydes.</p>
+              {!profileConfirmDelete ? (
+                <button onClick={() => setProfileConfirmDelete(true)} style={{ padding: "12px 20px", borderRadius: 10, border: "2px solid var(--danger)", background: "transparent", color: "var(--danger)", cursor: "pointer", fontFamily: "DM Sans", fontSize: 14, fontWeight: 600 }}>Slet alle mine data</button>
+              ) : (
+                <div>
+                  <p style={{ fontSize: 14, fontWeight: 600, color: "var(--danger)", marginBottom: 10 }}>Er du sikker? Al data slettes permanent.</p>
+                  <div style={{ display: "flex", gap: 10 }}>
+                    <button onClick={handleDeleteAllData} style={{ padding: "12px 20px", borderRadius: 10, border: "none", background: "var(--danger)", color: "#fff", cursor: "pointer", fontFamily: "DM Sans", fontSize: 14, fontWeight: 600 }}>Ja, slet alt</button>
+                    <button onClick={() => setProfileConfirmDelete(false)} style={{ padding: "12px 20px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--card)", cursor: "pointer", fontFamily: "DM Sans", fontSize: 14 }}>Annuller</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     );
   }
