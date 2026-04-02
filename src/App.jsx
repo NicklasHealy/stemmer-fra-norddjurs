@@ -628,6 +628,9 @@ const CitizenFlow = ({ onAdminClick }) => {
 
   const currentQuestion = themeQuestions[questionIndex] || null;
   const answeredQuestionIds = new Set(myResponses.filter(r => !r.is_followup).map(r => r.question_id));
+  const answeredCountPerTheme = myResponses
+    .filter(r => !r.is_followup && r.theme)
+    .reduce((map, r) => map.set(r.theme.id, (map.get(r.theme.id) || 0) + 1), new Map());
 
   const goToNextQuestion = () => {
     setAnswer(""); setAudioBlob(null); setAnswerType("text"); setInputMode("text");
@@ -842,7 +845,26 @@ const CitizenFlow = ({ onAdminClick }) => {
                 <span style={{ fontSize: 32 }}>{theme.icon}</span>
                 <div>
                   <div style={{ fontWeight: 600, fontSize: 16, fontFamily: "DM Sans" }}>{theme.name}</div>
-                  <div style={{ fontSize: 13, color: "var(--muted)", marginTop: 2, fontFamily: "DM Sans" }}>{qCount} aktive spørgsmål</div>
+                  {(() => {
+                    const answered = answeredCountPerTheme.get(theme.id) || 0;
+                    const allDone = answered >= qCount && qCount > 0;
+                    return (
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 2 }}>
+                        <span style={{ fontSize: 13, color: allDone ? "var(--success)" : "var(--muted)", fontFamily: "DM Sans" }}>
+                          {answered > 0
+                            ? allDone
+                              ? `✓ Alle ${qCount} besvaret`
+                              : `${answered}/${qCount} besvaret`
+                            : `${qCount} spørgsmål`}
+                        </span>
+                        {answered > 0 && !allDone && (
+                          <div style={{ flex: 1, height: 4, background: "var(--border)", borderRadius: 2, overflow: "hidden", maxWidth: 60 }}>
+                            <div style={{ width: `${(answered / qCount) * 100}%`, height: "100%", background: "var(--primary)", borderRadius: 2 }} />
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
               </button>
             );
