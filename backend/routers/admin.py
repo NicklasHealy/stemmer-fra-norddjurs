@@ -461,6 +461,25 @@ def admin_dashboard(admin: AdminUser = Depends(get_current_admin), db: Session =
 
 @router.post("/analysis")
 def admin_run_analysis(data: AnalysisRequest, admin: AdminUser = Depends(get_current_admin), db: Session = Depends(get_db)):
+    # Sentiment bruger gemte kolonner fra lokal BERT-analyse i stedet for Ollama
+    if data.analysis_type == "sentiment":
+        query = db.query(Response).filter(
+            Response.is_followup == False,
+            Response.is_excluded == False,
+            Response.sentiment_label.isnot(None),
+        )
+        if data.question_id:
+            query = query.filter(Response.question_id == data.question_id)
+        elif data.theme_id:
+            q_ids = [q.id for q in db.query(Question.id).filter(Question.theme_id == data.theme_id).all()]
+            query = query.filter(Response.question_id.in_(q_ids))
+        rows = query.all()
+        counts = {"positiv": 0, "neutral": 0, "negativ": 0}
+        for r in rows:
+            if r.sentiment_label in counts:
+                counts[r.sentiment_label] += 1
+        return {"analysis_type": "sentiment", "result": counts, "response_count": len(rows)}
+
     frozen_ids = [c.id for c in db.query(Citizen.id).filter(Citizen.frozen == True).all()]
     query = db.query(Response.text_content).filter(
         Response.is_followup == False,

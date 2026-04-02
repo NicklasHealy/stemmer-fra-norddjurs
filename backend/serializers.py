@@ -150,6 +150,9 @@ def response_dict(r: Response) -> dict:
         "followup_question_text": r.followup_question_text,
         "is_excluded": r.is_excluded, "is_flagged": r.is_flagged,
         "created_at": r.created_at.isoformat() if r.created_at else None,
+        "sentiment_label": r.sentiment_label,
+        "sentiment_score": r.sentiment_score,
+        "sentiment_low_agreement": r.sentiment_low_agreement,
     }
 
 

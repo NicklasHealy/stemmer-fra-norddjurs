@@ -130,6 +130,9 @@ class Response(Base):
     is_excluded = Column(Boolean, default=False, index=True)
     is_flagged = Column(Boolean, default=False, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+    sentiment_label = Column(String(20), nullable=True)
+    sentiment_score = Column(Float, nullable=True)
+    sentiment_low_agreement = Column(Boolean, default=False, nullable=True)
 
     question = relationship("Question", back_populates="responses")
     citizen = relationship("Citizen", back_populates="responses")

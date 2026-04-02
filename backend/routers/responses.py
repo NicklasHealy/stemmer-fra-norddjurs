@@ -7,7 +7,8 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, Request
 from sqlalchemy.orm import Session
 
-from database import get_db
+import threading
+from database import get_db, SessionLocal as _SessionLocal
 from models import Citizen, Response, Question, AISettings
 from auth import get_optional_citizen
 from schemas import SubmitResponse, FollowupRequest
@@ -24,6 +25,27 @@ from constants import (
 router = APIRouter(prefix="/api", tags=["responses"])
 
 UPLOAD_DIR = os.getenv("UPLOAD_DIR", "./uploads")
+
+
+def _analyse_sentiment_async(response_id: str, text: str):
+    """Kør sentiment-analyse i baggrunden og gem resultatet på response."""
+    def _run():
+        try:
+            from sentiment_analyse import analysér_sentiment
+            result = analysér_sentiment(text)
+            db = _SessionLocal()
+            try:
+                db.query(Response).filter(Response.id == response_id).update({
+                    "sentiment_label": result["label"],
+                    "sentiment_score": result["score"],
+                    "sentiment_low_agreement": not result["enighed"],
+                })
+                db.commit()
+            finally:
+                db.close()
+        except Exception as e:
+            print(f"[Sentiment] Async analyse fejlede: {e}")
+    threading.Thread(target=_run, daemon=True).start()
 MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_SIZE_MB", str(MAX_UPLOAD_SIZE_MB))) * 1024 * 1024
 
 
@@ -90,6 +112,9 @@ def submit_response(
     db.add(response)
     db.commit()
     db.refresh(response)
+
+    if response.text_content:
+        _analyse_sentiment_async(response.id, response.text_content)
 
     if is_flagged and not data.is_followup:
         question = db.query(Question).filter(Question.id == data.question_id).first()
@@ -171,6 +196,9 @@ async def submit_audio_response(
         db.add(response)
         db.commit()
         db.refresh(response)
+
+        if response.text_content:
+            _analyse_sentiment_async(response.id, response.text_content)
     except Exception:
         # Slet lydfilen hvis DB-operationen fejler for at undgå disk-leak
         if os.path.exists(filepath):
