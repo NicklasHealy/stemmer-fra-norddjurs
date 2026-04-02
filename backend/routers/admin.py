@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Optional, List
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -406,31 +406,44 @@ def admin_export_csv(admin: AdminUser = Depends(get_current_admin), db: Session 
 # ─── Dashboard ────────────────────────────────────────────────────────────────
 
 @router.get("/dashboard")
-def admin_dashboard(admin: AdminUser = Depends(get_current_admin), db: Session = Depends(get_db)):
+def admin_dashboard(
+    forloeb_id: Optional[str] = Query(None),
+    admin: AdminUser = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
     frozen_ids = [c.id for c in db.query(Citizen.id).filter(Citizen.frozen == True).all()]
 
-    def not_frozen(q):
-        return q.filter(~Response.citizen_id.in_(frozen_ids)) if frozen_ids else q
+    def base_resp(extra_filters=()):
+        q = db.query(Response).filter(
+            Response.is_followup == False,
+            Response.is_excluded == False,
+            *extra_filters,
+        )
+        if forloeb_id:
+            q = q.join(Question, Question.id == Response.question_id).filter(
+                Question.forloeb_id == forloeb_id
+            )
+        if frozen_ids:
+            q = q.filter(~Response.citizen_id.in_(frozen_ids))
+        return q
 
-    total_responses = not_frozen(db.query(Response).filter(
-        Response.is_followup == False,
-        Response.is_excluded == False,
-    )).count()
-    flagged_count = not_frozen(db.query(Response).filter(
-        Response.is_followup == False,
-        Response.is_flagged == True,
-        Response.is_excluded == False,
-    )).count()
+    total_responses = base_resp().count()
+    flagged_count = base_resp((Response.is_flagged == True,)).count()
     total_citizens = db.query(Citizen).count()
 
-    themes = db.query(Theme).order_by(Theme.sort_order).all()
-    # Ét JOIN-query for response-count pr. tema i stedet for loop med N×2 queries
+    themes_q = db.query(Theme).order_by(Theme.sort_order)
+    if forloeb_id:
+        themes_q = themes_q.filter(Theme.forloeb_id == forloeb_id)
+    themes = themes_q.all()
+
     theme_counts_q = (
         db.query(Theme.id, func.count(Response.id))
         .join(Question, Question.theme_id == Theme.id)
         .join(Response, Response.question_id == Question.id)
         .filter(Response.is_followup == False, Response.is_excluded == False)
     )
+    if forloeb_id:
+        theme_counts_q = theme_counts_q.filter(Question.forloeb_id == forloeb_id)
     if frozen_ids:
         theme_counts_q = theme_counts_q.filter(~Response.citizen_id.in_(frozen_ids))
     theme_counts = dict(theme_counts_q.group_by(Theme.id).all())
@@ -455,6 +468,66 @@ def admin_dashboard(admin: AdminUser = Depends(get_current_admin), db: Session =
         "age_distribution": [{"label": a, "value": c} for a, c in age_dist],
         "area_distribution": [{"label": a, "value": c} for a, c in area_dist],
     }
+
+
+@router.get("/dashboard/sentiment")
+def admin_dashboard_sentiment(
+    forloeb_id: Optional[str] = Query(None),
+    admin: AdminUser = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    q = (
+        db.query(Response, Question, Theme)
+        .join(Question, Question.id == Response.question_id)
+        .join(Theme, Theme.id == Question.theme_id, isouter=True)
+        .filter(Response.is_followup == False, Response.is_excluded == False)
+    )
+    if forloeb_id:
+        q = q.filter(Question.forloeb_id == forloeb_id)
+    rows = q.order_by(Theme.sort_order, Question.sort_order).all()
+
+    forloeb_counts = {"positiv": 0, "neutral": 0, "negativ": 0, "total": 0, "analyseret": 0}
+    temaer_map: dict = {}
+
+    for resp, question, theme in rows:
+        forloeb_counts["total"] += 1
+        if resp.sentiment_label:
+            forloeb_counts["analyseret"] += 1
+            if resp.sentiment_label in forloeb_counts:
+                forloeb_counts[resp.sentiment_label] += 1
+
+        if theme:
+            if theme.id not in temaer_map:
+                temaer_map[theme.id] = {
+                    "tema_id": theme.id, "navn": theme.name, "icon": theme.icon,
+                    "positiv": 0, "neutral": 0, "negativ": 0, "total": 0, "lav_enighed": 0,
+                    "_spoergsmaal": {},
+                }
+            t = temaer_map[theme.id]
+            t["total"] += 1
+            if resp.sentiment_label in ("positiv", "neutral", "negativ"):
+                t[resp.sentiment_label] += 1
+            if resp.sentiment_low_agreement:
+                t["lav_enighed"] += 1
+
+            if question.id not in t["_spoergsmaal"]:
+                t["_spoergsmaal"][question.id] = {
+                    "id": question.id, "titel": question.title,
+                    "positiv": 0, "neutral": 0, "negativ": 0, "total": 0, "lav_enighed": 0,
+                }
+            sq = t["_spoergsmaal"][question.id]
+            sq["total"] += 1
+            if resp.sentiment_label in ("positiv", "neutral", "negativ"):
+                sq[resp.sentiment_label] += 1
+            if resp.sentiment_low_agreement:
+                sq["lav_enighed"] += 1
+
+    temaer_out = []
+    for t in temaer_map.values():
+        spoergsmaal = list(t.pop("_spoergsmaal").values())
+        temaer_out.append({**t, "spoergsmaal": spoergsmaal})
+
+    return {"forloeb": forloeb_counts, "temaer": temaer_out}
 
 
 # ─── AI-analyse ───────────────────────────────────────────────────────────────

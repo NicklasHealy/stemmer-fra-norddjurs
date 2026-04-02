@@ -251,9 +251,9 @@ const BarChart = ({ data, maxVal }) => {
 };
 
 // ─── Donut Chart ───
-const DonutChart = ({ data, size = 160 }) => {
+const DonutChart = ({ data, size = 160, colors: colorsProp }) => {
   const total = data.reduce((a, d) => a + d.value, 0) || 1;
-  const colors = ["#2D5A3D", "#D4763A", "#5B8FA8", "#A0783C", "#7A5C8D", "#C04040"];
+  const colors = colorsProp || ["#2D5A3D", "#D4763A", "#5B8FA8", "#A0783C", "#7A5C8D", "#C04040"];
   let cumAngle = 0;
 
   const paths = data.filter(d => d.value > 0).map((d, i) => {
@@ -286,6 +286,34 @@ const DonutChart = ({ data, size = 160 }) => {
             <div style={{ width: 12, height: 12, borderRadius: 3, background: colors[i % colors.length] }} />
             <span>{d.label}: {d.value} ({Math.round(d.value / total * 100)}%)</span>
           </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+// ─── Sentiment Bar ───
+const SENTIMENT_COLORS = { positiv: "#2D8A4E", neutral: "#A0783C", negativ: "#C04040" };
+const SentimentBar = ({ positiv = 0, neutral = 0, negativ = 0 }) => {
+  const total = positiv + neutral + negativ || 1;
+  const segments = [
+    { label: "Positiv", value: positiv, color: SENTIMENT_COLORS.positiv },
+    { label: "Neutral", value: neutral, color: SENTIMENT_COLORS.neutral },
+    { label: "Negativ", value: negativ, color: SENTIMENT_COLORS.negativ },
+  ].filter(s => s.value > 0);
+  return (
+    <div>
+      <div style={{ display: "flex", height: 16, borderRadius: 6, overflow: "hidden", gap: 2 }}>
+        {segments.map((s, i) => (
+          <div key={i} style={{ flex: s.value, background: s.color }} title={`${s.label}: ${s.value}`} />
+        ))}
+      </div>
+      <div style={{ display: "flex", gap: 12, marginTop: 5, flexWrap: "wrap" }}>
+        {segments.map((s, i) => (
+          <span key={i} style={{ fontSize: 12, color: "var(--muted)", display: "flex", alignItems: "center", gap: 4 }}>
+            <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 2, background: s.color }} />
+            {s.label}: {s.value} ({Math.round(s.value / total * 100)}%)
+          </span>
         ))}
       </div>
     </div>
@@ -1692,6 +1720,8 @@ const AdminPanel = ({ adminToken, onLogout }) => {
   const [forloebList, setForloebList] = useState([]);
   const [pendingQuestions, setPendingQuestions] = useState([]);
   const [pendingForloebId, setPendingForloebId] = useState(null);
+  const [selectedDashboardForloeb, setSelectedDashboardForloeb] = useState(null);
+  const [sentimentData, setSentimentData] = useState(null);
 
   // ── Forløb wizard ──
   const [wizardOpen, setWizardOpen] = useState(false);
@@ -1715,23 +1745,34 @@ const AdminPanel = ({ adminToken, onLogout }) => {
   // Load initial data
   useEffect(() => {
     const load = async () => {
-      const [themesRes, areasRes, questionsRes, dashRes, aiRes, forloebRes] = await Promise.all([
+      const [themesRes, areasRes, questionsRes, aiRes, forloebRes] = await Promise.all([
         fetch(`${API_BASE}/api/themes`),
         fetch(`${API_BASE}/api/areas`),
         adminFetch("/api/admin/questions"),
-        adminFetch("/api/admin/dashboard"),
         adminFetch("/api/admin/ai-settings"),
         adminFetch("/api/admin/forloeb"),
       ]);
       if (themesRes.ok) setThemes(await themesRes.json());
       if (areasRes.ok) setAreas(await areasRes.json());
       if (questionsRes.ok) setQuestions(await questionsRes.json());
-      if (dashRes.ok) setDashboard(await dashRes.json());
       if (aiRes.ok) setAiSettings(await aiRes.json());
       if (forloebRes.ok) setForloebList(await forloebRes.json());
     };
     load();
   }, []);
+
+  // Reload dashboard + sentiment when forløbsvalg changes
+  useEffect(() => {
+    if (!adminToken) return;
+    const params = selectedDashboardForloeb ? `?forloeb_id=${selectedDashboardForloeb}` : "";
+    Promise.all([
+      adminFetch(`/api/admin/dashboard${params}`),
+      adminFetch(`/api/admin/dashboard/sentiment${params}`),
+    ]).then(async ([dashRes, sentRes]) => {
+      if (dashRes.ok) setDashboard(await dashRes.json());
+      if (sentRes.ok) setSentimentData(await sentRes.json());
+    });
+  }, [selectedDashboardForloeb, adminToken]);
 
   // Load responses when tab or filters change
   useEffect(() => {
@@ -1954,7 +1995,17 @@ const AdminPanel = ({ adminToken, onLogout }) => {
         {/* ── Dashboard Tab ── */}
         {tab === "dashboard" && (
           <div className="fade-in">
-            <h1 style={{ fontSize: 28, fontWeight: 700, marginBottom: 8 }}>Dashboard</h1>
+            <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", marginBottom: 8, flexWrap: "wrap", gap: 12 }}>
+              <h1 style={{ fontSize: 28, fontWeight: 700, margin: 0 }}>Dashboard</h1>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <label style={{ fontSize: 13, color: "var(--muted)", fontWeight: 500 }}>Forløb:</label>
+                <select value={selectedDashboardForloeb || ""} onChange={e => setSelectedDashboardForloeb(e.target.value || null)}
+                  style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid var(--border)", fontFamily: "DM Sans", fontSize: 13, background: "var(--surface)", color: "var(--fg)", cursor: "pointer" }}>
+                  <option value="">Alle forløb</option>
+                  {forloebList.map(f => <option key={f.id} value={f.id}>{f.title}</option>)}
+                </select>
+              </div>
+            </div>
             <p style={{ color: "var(--muted)", marginBottom: 28 }}>
               {dashboard?.total_responses ?? "—"} besvarelser i alt
             </p>
@@ -2010,6 +2061,80 @@ const AdminPanel = ({ adminToken, onLogout }) => {
                 )}
               </div>
             </div>
+
+            {/* ── Sentiment Section ── */}
+            {sentimentData && sentimentData.forloeb?.total > 0 && (
+              <div style={{ marginTop: 28 }}>
+                <h2 style={{ fontSize: 20, fontWeight: 700, marginBottom: 16 }}>Sentiment-overblik</h2>
+
+                {/* Forløb-niveau donut + bar */}
+                <div style={{ ...cardStyle, marginBottom: 20 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 8 }}>
+                    <h3 style={{ fontSize: 16, fontWeight: 600, margin: 0 }}>Overordnet sentiment</h3>
+                    <span style={{ fontSize: 13, color: "var(--muted)" }}>
+                      {sentimentData.forloeb.analyseret} af {sentimentData.forloeb.total} besvarelser analyseret
+                    </span>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: 24, alignItems: "center" }}>
+                    <DonutChart
+                      size={120}
+                      colors={[SENTIMENT_COLORS.positiv, SENTIMENT_COLORS.neutral, SENTIMENT_COLORS.negativ]}
+                      data={[
+                        { label: "Positiv", value: sentimentData.forloeb.positiv },
+                        { label: "Neutral", value: sentimentData.forloeb.neutral },
+                        { label: "Negativ", value: sentimentData.forloeb.negativ },
+                      ]}
+                    />
+                    <SentimentBar
+                      positiv={sentimentData.forloeb.positiv}
+                      neutral={sentimentData.forloeb.neutral}
+                      negativ={sentimentData.forloeb.negativ}
+                    />
+                  </div>
+                </div>
+
+                {/* Per-tema bars */}
+                {sentimentData.temaer?.length > 0 && (
+                  <div style={cardStyle}>
+                    <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 16 }}>Sentiment pr. tema</h3>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+                      {sentimentData.temaer.map(tema => (
+                        <div key={tema.tema_id}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                            <span style={{ fontSize: 16 }}>{tema.icon}</span>
+                            <span style={{ fontWeight: 600, fontSize: 14 }}>{tema.navn}</span>
+                            {tema.lav_enighed > 0 && (
+                              <span title={`${tema.lav_enighed} besvarelse(r) med lav model-enighed`}
+                                style={{ fontSize: 12, color: "#C04040", display: "flex", alignItems: "center", gap: 3 }}>
+                                ⚠️ {tema.lav_enighed} lav enighed
+                              </span>
+                            )}
+                            <span style={{ marginLeft: "auto", fontSize: 12, color: "var(--muted)" }}>{tema.total} besv.</span>
+                          </div>
+                          <SentimentBar positiv={tema.positiv} neutral={tema.neutral} negativ={tema.negativ} />
+
+                          {/* Per-spørgsmål */}
+                          {tema.spoergsmaal?.length > 0 && (
+                            <div style={{ marginTop: 10, paddingLeft: 16, borderLeft: "2px solid var(--border)", display: "flex", flexDirection: "column", gap: 10 }}>
+                              {tema.spoergsmaal.map(sp => (
+                                <div key={sp.question_id}>
+                                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 5 }}>
+                                    <span style={{ fontSize: 13, color: "var(--fg)", flex: 1 }}>{sp.titel}</span>
+                                    {sp.lav_enighed > 0 && <span title="Lav model-enighed" style={{ fontSize: 13 }}>⚠️</span>}
+                                    <span style={{ fontSize: 12, color: "var(--muted)", whiteSpace: "nowrap" }}>{sp.total} besv.</span>
+                                  </div>
+                                  <SentimentBar positiv={sp.positiv} neutral={sp.neutral} negativ={sp.negativ} />
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
 
