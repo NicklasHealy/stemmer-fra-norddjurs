@@ -972,6 +972,19 @@ const CitizenFlow = ({ onAdminClick }) => {
           <button onClick={authMode === "login" ? handleLogin : handleRegister} disabled={loading} style={{ ...bp, opacity: loading ? 0.6 : 1 }}>
             {loading ? "Vent..." : (authMode === "login" ? "Log ind" : "Opret konto")}
           </button>
+          {authMode === "register" && (
+            <div style={{ marginTop: 14, padding: "12px 16px", background: "var(--primary-pale)", borderRadius: 12, border: "1px solid var(--primary)" }}>
+              <p style={{ fontSize: 13, color: "var(--fg)", lineHeight: 1.6 }}>
+                Vi er forpligtet til at du til enhver tid kan se, downloade, ændre eller slette din data. Derfor er det nødvendigt at du opretter en konto.{" "}
+                <button
+                  onClick={() => { prevStep.current = 3; setStep(9); }}
+                  style={{ background: "none", border: "none", color: "var(--primary)", fontFamily: "DM Sans", fontSize: 13, fontWeight: 600, cursor: "pointer", padding: 0, textDecoration: "underline", textUnderlineOffset: 3 }}
+                >
+                  Læs privatlivspolitikken
+                </button>
+              </p>
+            </div>
+          )}
           <button onClick={() => { setAuthMode(authMode === "login" ? "register" : "login"); setAuthError(""); }}
             style={{ marginTop: 16, background: "none", border: "none", color: "var(--primary)", fontSize: 15, cursor: "pointer", fontFamily: "DM Sans", fontWeight: 500 }}>
             {authMode === "login" ? "Har du ikke en konto? Opret én her" : "Har du allerede en konto? Log ind"}
