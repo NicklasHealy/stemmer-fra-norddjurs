@@ -334,6 +334,7 @@ const CitizenFlow = ({ onAdminClick }) => {
   const [inputMode, setInputMode] = useState("text");
   const [followupInputMode, setFollowupInputMode] = useState("text");
   const [profileConfirmDelete, setProfileConfirmDelete] = useState(false);
+  const [profileTab, setProfileTab] = useState("info");
   const [consentExpanded, setConsentExpanded] = useState(false);
   const [privacyPolicyText, setPrivacyPolicyText] = useState(null);
   const [citizenFrozen, setCitizenFrozen] = useState(false);
@@ -1370,6 +1371,12 @@ const CitizenFlow = ({ onAdminClick }) => {
   // ── Step 8: Profile ──
   if (step === 8 && citizen) {
     const mainResponses = myResponses.filter(r => !r.is_followup);
+    const missingInfo = !metaAge || !metaArea || (metaArea === "Andet" && !customArea.trim());
+    const profileTabs = [
+      { id: "info", label: "Oplysninger", warn: missingInfo },
+      { id: "responses", label: "Mine besvarelser" },
+      { id: "privacy", label: "Data & privatliv" },
+    ];
     return (
       <div style={cs} className="fade-in">
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
@@ -1377,157 +1384,205 @@ const CitizenFlow = ({ onAdminClick }) => {
           <button onClick={handleLogout} style={{ background: "none", border: "1px solid var(--border)", borderRadius: 10, padding: "6px 14px", cursor: "pointer", fontFamily: "DM Sans", fontSize: 13, color: "var(--muted)" }}>Log ud</button>
         </div>
         <h2 style={{ fontSize: 24, fontWeight: 700, marginBottom: 4 }}>Min profil</h2>
-        <p style={{ fontSize: 14, color: "var(--muted)", marginBottom: 28 }}>{citizen.email}</p>
+        <p style={{ fontSize: 14, color: "var(--muted)", marginBottom: 20 }}>{citizen.email}</p>
 
-        {/* Metadata */}
-        <div style={{ background: "var(--card)", borderRadius: 16, padding: 20, border: "1px solid var(--border)", marginBottom: 20 }}>
-          <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 16 }}>Mine oplysninger</h3>
-          <div style={{ marginBottom: 14 }}>
-            <label style={{ display: "block", fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Aldersgruppe</label>
-            <select value={metaAge} onChange={e => setMetaAge(e.target.value)} style={{ width: "100%", padding: 12, borderRadius: 10, border: "1px solid var(--border)", fontSize: 15, background: "var(--bg)" }}>
-              <option value="">Ikke angivet</option>
-              {AGE_GROUPS.map(o => <option key={o} value={o}>{o}</option>)}
-            </select>
+        {/* Tab navigation */}
+        <div style={{ display: "flex", borderBottom: "2px solid var(--border)", marginBottom: 24 }}>
+          {profileTabs.map(t => (
+            <button key={t.id} onClick={() => setProfileTab(t.id)}
+              style={{
+                position: "relative", padding: "10px 14px", background: "none", border: "none",
+                cursor: "pointer", fontFamily: "DM Sans", fontSize: 14,
+                fontWeight: profileTab === t.id ? 700 : 400,
+                color: profileTab === t.id ? "var(--primary)" : "var(--muted)",
+                borderBottom: profileTab === t.id ? "2px solid var(--primary)" : "2px solid transparent",
+                marginBottom: -2, transition: "all 0.15s", whiteSpace: "nowrap",
+              }}>
+              {t.label}
+              {t.warn && (
+                <span style={{
+                  position: "absolute", top: 6, right: 2,
+                  width: 8, height: 8, borderRadius: "50%",
+                  background: "var(--accent)", border: "2px solid var(--bg)",
+                }} />
+              )}
+            </button>
+          ))}
+        </div>
+
+        {/* Tab: Oplysninger */}
+        {profileTab === "info" && (
+          <div>
+            {missingInfo && (
+              <div style={{ padding: "10px 14px", background: "#FFF7ED", borderRadius: 10, border: "1px solid var(--accent-light)", marginBottom: 16, display: "flex", gap: 8, alignItems: "flex-start" }}>
+                <span style={{ fontSize: 16, flexShrink: 0 }}>⚠️</span>
+                <p style={{ fontSize: 13, color: "var(--accent)", lineHeight: 1.5 }}>
+                  Dine oplysninger er ikke udfyldt. Udfyld aldersgruppe og område for at hjælpe os forstå, hvem der svarer.
+                </p>
+              </div>
+            )}
+            <div style={{ background: "var(--card)", borderRadius: 16, padding: 20, border: "1px solid var(--border)" }}>
+              <div style={{ marginBottom: 14 }}>
+                <label style={{ display: "block", fontSize: 13, fontWeight: 600, marginBottom: 4 }}>
+                  Aldersgruppe
+                  {!metaAge && <span style={{ marginLeft: 6, fontSize: 11, color: "var(--accent)", fontWeight: 500 }}>Mangler</span>}
+                </label>
+                <select value={metaAge} onChange={e => setMetaAge(e.target.value)} style={{ width: "100%", padding: 12, borderRadius: 10, border: `1px solid ${!metaAge ? "var(--accent)" : "var(--border)"}`, fontSize: 15, background: "var(--bg)" }}>
+                  <option value="">Ikke angivet</option>
+                  {AGE_GROUPS.map(o => <option key={o} value={o}>{o}</option>)}
+                </select>
+              </div>
+              <div style={{ marginBottom: 14 }}>
+                <label style={{ display: "block", fontSize: 13, fontWeight: 600, marginBottom: 4 }}>
+                  Område
+                  {!metaArea && <span style={{ marginLeft: 6, fontSize: 11, color: "var(--accent)", fontWeight: 500 }}>Mangler</span>}
+                </label>
+                <select value={metaArea} onChange={e => { setMetaArea(e.target.value); if (e.target.value !== "Andet") setCustomArea(""); }} style={{ width: "100%", padding: 12, borderRadius: 10, border: `1px solid ${!metaArea ? "var(--accent)" : "var(--border)"}`, fontSize: 15, background: "var(--bg)" }}>
+                  <option value="">Ikke angivet</option>
+                  {areas.map(o => <option key={o} value={o}>{o}</option>)}
+                  <option value="Andet">Andet</option>
+                </select>
+                {metaArea === "Andet" && (
+                  <input
+                    type="text"
+                    value={customArea}
+                    onChange={e => setCustomArea(e.target.value)}
+                    placeholder="Skriv din by"
+                    style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid var(--border)", fontSize: 15, outline: "none", marginTop: 8, background: "var(--bg)" }}
+                  />
+                )}
+              </div>
+              <button onClick={handleSaveMetadata} style={{ padding: "12px 20px", borderRadius: 10, border: "none", background: "var(--primary)", color: "#fff", cursor: "pointer", fontFamily: "DM Sans", fontSize: 14, fontWeight: 600, marginTop: 4 }}>
+                {metaSaved ? "✓ Gemt!" : "Gem ændringer"}
+              </button>
+            </div>
           </div>
-          <div style={{ marginBottom: 14 }}>
-            <label style={{ display: "block", fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Område</label>
-            <select value={metaArea} onChange={e => { setMetaArea(e.target.value); if (e.target.value !== "Andet") setCustomArea(""); }} style={{ width: "100%", padding: 12, borderRadius: 10, border: "1px solid var(--border)", fontSize: 15, background: "var(--bg)" }}>
-              <option value="">Ikke angivet</option>
-              {areas.map(o => <option key={o} value={o}>{o}</option>)}
-              <option value="Andet">Andet</option>
-            </select>
-            {metaArea === "Andet" && (
-              <input
-                type="text"
-                value={customArea}
-                onChange={e => setCustomArea(e.target.value)}
-                placeholder="Skriv din by"
-                style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid var(--border)", fontSize: 15, outline: "none", marginTop: 8, background: "var(--bg)" }}
-              />
+        )}
+
+        {/* Tab: Mine besvarelser */}
+        {profileTab === "responses" && (
+          <div style={{ background: "var(--card)", borderRadius: 16, padding: 20, border: "1px solid var(--border)" }}>
+            <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 12 }}>Mine besvarelser ({mainResponses.length})</h3>
+            {mainResponses.length === 0 ? (
+              <p style={{ fontSize: 14, color: "var(--muted)" }}>Du har ikke besvaret nogen spørgsmål endnu.</p>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {mainResponses.map(r => {
+                  const q = r.question;
+                  const t = r.theme;
+                  const followup = r.followup_response;
+                  return (
+                    <div key={r.id} style={{ padding: 14, background: "var(--bg)", borderRadius: 10 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4 }}>
+                        <div style={{ fontSize: 12, color: "var(--primary)", fontWeight: 500 }}>{t?.icon} {t?.name} — {fmt(r.created_at)}</div>
+                        <button onClick={() => handleDeleteSingleResponse(r.id)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 13, color: "var(--danger)", padding: "0 4px", fontFamily: "DM Sans", flexShrink: 0 }}>Slet</button>
+                      </div>
+                      <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 4 }}>{q?.body}</div>
+                      <div style={{ fontSize: 14 }}>{r.text_content}</div>
+                      {followup && (
+                        <div style={{ borderLeft: "3px solid var(--accent)", paddingLeft: 10, marginTop: 8 }}>
+                          <div style={{ fontSize: 12, color: "var(--accent)", fontWeight: 500 }}>{followup.followup_question_text}</div>
+                          <div style={{ fontSize: 13, marginTop: 2 }}>{followup.text_content}</div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             )}
           </div>
-          <button onClick={handleSaveMetadata} style={{ padding: "12px 20px", borderRadius: 10, border: "none", background: "var(--primary)", color: "#fff", cursor: "pointer", fontFamily: "DM Sans", fontSize: 14, fontWeight: 600, marginTop: 4 }}>
-            {metaSaved ? "✓ Gemt!" : "Gem ændringer"}
-          </button>
-        </div>
+        )}
 
-        {/* My responses */}
-        <div style={{ background: "var(--card)", borderRadius: 16, padding: 20, border: "1px solid var(--border)", marginBottom: 20 }}>
-          <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 12 }}>Mine besvarelser ({mainResponses.length})</h3>
-          {mainResponses.length === 0 ? (
-            <p style={{ fontSize: 14, color: "var(--muted)" }}>Du har ikke besvaret nogen spørgsmål endnu.</p>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {mainResponses.map(r => {
-                const q = r.question;
-                const t = r.theme;
-                const followup = r.followup_response;
-                return (
-                  <div key={r.id} style={{ padding: 14, background: "var(--bg)", borderRadius: 10 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4 }}>
-                      <div style={{ fontSize: 12, color: "var(--primary)", fontWeight: 500 }}>{t?.icon} {t?.name} — {fmt(r.created_at)}</div>
-                      <button onClick={() => handleDeleteSingleResponse(r.id)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 13, color: "var(--danger)", padding: "0 4px", fontFamily: "DM Sans", flexShrink: 0 }}>Slet</button>
-                    </div>
-                    <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 4 }}>{q?.body}</div>
-                    <div style={{ fontSize: 14 }}>{r.text_content}</div>
-                    {followup && (
-                      <div style={{ borderLeft: "3px solid var(--accent)", paddingLeft: 10, marginTop: 8 }}>
-                        <div style={{ fontSize: 12, color: "var(--accent)", fontWeight: 500 }}>{followup.followup_question_text}</div>
-                        <div style={{ fontSize: 13, marginTop: 2 }}>{followup.text_content}</div>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
+        {/* Tab: Data & privatliv */}
+        {profileTab === "privacy" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            {/* Download */}
+            <div style={{ background: "var(--card)", borderRadius: 16, padding: 20, border: "1px solid var(--border)" }}>
+              <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 6 }}>Download mine data</h3>
+              <p style={{ fontSize: 14, color: "var(--muted)", lineHeight: 1.6, marginBottom: 12 }}>Download alle dine besvarelser og oplysninger som en JSON-fil (GDPR artikel 20 — dataportabilitet).</p>
+              <button
+                onClick={async () => {
+                  const res = await apiFetch("/api/citizen/export", {}, citizenToken);
+                  if (res.ok) {
+                    const data = await res.json();
+                    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = "mine-data-norddjurs.json";
+                    a.click();
+                    URL.revokeObjectURL(url);
+                  }
+                }}
+                style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 20px", borderRadius: 10, border: "1px solid var(--primary)", background: "var(--primary-pale)", color: "var(--primary)", cursor: "pointer", fontFamily: "DM Sans", fontSize: 14, fontWeight: 600 }}
+              >
+                <Icon name="download" size={18} color="var(--primary)" /> Download mine data (JSON)
+              </button>
             </div>
-          )}
-        </div>
 
-        {/* Opgave 13a: Download mine data */}
-        <div style={{ background: "var(--card)", borderRadius: 16, padding: 20, border: "1px solid var(--border)", marginBottom: 16 }}>
-          <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 6 }}>Download mine data</h3>
-          <p style={{ fontSize: 14, color: "var(--muted)", lineHeight: 1.6, marginBottom: 12 }}>Download alle dine besvarelser og oplysninger som en JSON-fil (GDPR artikel 20 — dataportabilitet).</p>
-          <button
-            onClick={async () => {
-              const res = await apiFetch("/api/citizen/export", {}, citizenToken);
-              if (res.ok) {
-                const data = await res.json();
-                const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement("a");
-                a.href = url;
-                a.download = "mine-data-norddjurs.json";
-                a.click();
-                URL.revokeObjectURL(url);
-              }
-            }}
-            style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 20px", borderRadius: 10, border: "1px solid var(--primary)", background: "var(--primary-pale)", color: "var(--primary)", cursor: "pointer", fontFamily: "DM Sans", fontSize: 14, fontWeight: 600 }}
-          >
-            <Icon name="download" size={18} color="var(--primary)" /> Download mine data (JSON)
-          </button>
-        </div>
+            {/* Frys */}
+            <div style={{ background: "var(--card)", borderRadius: 16, padding: 20, border: "1px solid var(--border)" }}>
+              <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 6 }}>
+                {citizenFrozen ? "Dine data er frosset" : "Frys mine data"}
+              </h3>
+              <p style={{ fontSize: 14, color: "var(--muted)", lineHeight: 1.6, marginBottom: 12 }}>
+                {citizenFrozen
+                  ? "Dine besvarelser indgår ikke i analyser eller AI-opfølgninger, mens dine data er frosset. Du kan til enhver tid ophæve frysningen."
+                  : "Dine besvarelser bevares, men ekskluderes fra dashboard, analyse og AI-perspektiver (GDPR artikel 18 — ret til begrænsning)."}
+              </p>
+              <button
+                onClick={async () => {
+                  const res = await apiFetch("/api/citizen/freeze", { method: "PUT" }, citizenToken);
+                  if (res.ok) {
+                    const data = await res.json();
+                    setCitizenFrozen(data.frozen);
+                  }
+                }}
+                style={{ padding: "12px 20px", borderRadius: 10, border: `1px solid ${citizenFrozen ? "var(--success)" : "var(--muted)"}`, background: citizenFrozen ? "#F0FFF4" : "var(--bg)", color: citizenFrozen ? "var(--success)" : "var(--muted)", cursor: "pointer", fontFamily: "DM Sans", fontSize: 14, fontWeight: 600 }}
+              >
+                {citizenFrozen ? "✓ Fjern frys" : "Frys mine data"}
+              </button>
+            </div>
 
-        {/* Opgave 13b: Frys mine data */}
-        <div style={{ background: "var(--card)", borderRadius: 16, padding: 20, border: "1px solid var(--border)", marginBottom: 16 }}>
-          <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 6 }}>
-            {citizenFrozen ? "Dine data er frosset" : "Frys mine data"}
-          </h3>
-          <p style={{ fontSize: 14, color: "var(--muted)", lineHeight: 1.6, marginBottom: 12 }}>
-            {citizenFrozen
-              ? "Dine besvarelser indgår ikke i analyser eller AI-opfølgninger, mens dine data er frosset. Du kan til enhver tid ophæve frysningen."
-              : "Dine besvarelser bevares, men ekskluderes fra dashboard, analyse og AI-perspektiver (GDPR artikel 18 — ret til begrænsning)."}
-          </p>
-          <button
-            onClick={async () => {
-              const res = await apiFetch("/api/citizen/freeze", { method: "PUT" }, citizenToken);
-              if (res.ok) {
-                const data = await res.json();
-                setCitizenFrozen(data.frozen);
-              }
-            }}
-            style={{ padding: "12px 20px", borderRadius: 10, border: `1px solid ${citizenFrozen ? "var(--success)" : "var(--muted)"}`, background: citizenFrozen ? "#F0FFF4" : "var(--bg)", color: citizenFrozen ? "var(--success)" : "var(--muted)", cursor: "pointer", fontFamily: "DM Sans", fontSize: 14, fontWeight: 600 }}
-          >
-            {citizenFrozen ? "✓ Fjern frys" : "Frys mine data"}
-          </button>
-        </div>
-
-        {/* Opgave 13c + 12: Links */}
-        <div style={{ background: "var(--card)", borderRadius: 16, padding: 20, border: "1px solid var(--border)", marginBottom: 16 }}>
-          <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 12 }}>Dine rettigheder</h3>
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            <button
-              onClick={() => { prevStep.current = 8; setStep(9); }}
-              style={{ display: "flex", alignItems: "center", gap: 8, background: "none", border: "none", color: "var(--primary)", fontSize: 14, cursor: "pointer", fontFamily: "DM Sans", fontWeight: 500, textAlign: "left", padding: 0 }}
-            >
-              📋 Læs privatlivspolitikken
-            </button>
-            <a
-              href="https://datatilsynet.dk"
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--primary)", fontSize: 14, fontFamily: "DM Sans", fontWeight: 500, textDecoration: "none" }}
-            >
-              🏛️ Klage til Datatilsynet (datatilsynet.dk)
-            </a>
-          </div>
-        </div>
-
-        {/* GDPR Delete */}
-        <div style={{ background: "#FEF2F2", borderRadius: 16, padding: 20, border: "1px solid #FECACA", marginBottom: 20 }}>
-          <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 8, color: "var(--danger)" }}>Træk samtykke tilbage</h3>
-          <p style={{ fontSize: 14, lineHeight: 1.6, marginBottom: 14 }}>Dette sletter permanent alle dine svar, lydoptagelser, metadata og din konto. Handlingen kan ikke fortrydes.</p>
-          {!profileConfirmDelete ? (
-            <button onClick={() => setProfileConfirmDelete(true)} style={{ padding: "12px 20px", borderRadius: 10, border: "2px solid var(--danger)", background: "transparent", color: "var(--danger)", cursor: "pointer", fontFamily: "DM Sans", fontSize: 14, fontWeight: 600 }}>Slet alle mine data</button>
-          ) : (
-            <div>
-              <p style={{ fontSize: 14, fontWeight: 600, color: "var(--danger)", marginBottom: 10 }}>Er du sikker? Al data slettes permanent.</p>
-              <div style={{ display: "flex", gap: 10 }}>
-                <button onClick={handleDeleteAllData} style={{ padding: "12px 20px", borderRadius: 10, border: "none", background: "var(--danger)", color: "#fff", cursor: "pointer", fontFamily: "DM Sans", fontSize: 14, fontWeight: 600 }}>Ja, slet alt</button>
-                <button onClick={() => setProfileConfirmDelete(false)} style={{ padding: "12px 20px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--card)", cursor: "pointer", fontFamily: "DM Sans", fontSize: 14 }}>Annuller</button>
+            {/* Rettigheder */}
+            <div style={{ background: "var(--card)", borderRadius: 16, padding: 20, border: "1px solid var(--border)" }}>
+              <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 12 }}>Dine rettigheder</h3>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <button
+                  onClick={() => { prevStep.current = 8; setStep(9); }}
+                  style={{ display: "flex", alignItems: "center", gap: 8, background: "none", border: "none", color: "var(--primary)", fontSize: 14, cursor: "pointer", fontFamily: "DM Sans", fontWeight: 500, textAlign: "left", padding: 0 }}
+                >
+                  📋 Læs privatlivspolitikken
+                </button>
+                <a
+                  href="https://datatilsynet.dk"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--primary)", fontSize: 14, fontFamily: "DM Sans", fontWeight: 500, textDecoration: "none" }}
+                >
+                  🏛️ Klage til Datatilsynet (datatilsynet.dk)
+                </a>
               </div>
             </div>
-          )}
-        </div>
+
+            {/* Slet */}
+            <div style={{ background: "#FEF2F2", borderRadius: 16, padding: 20, border: "1px solid #FECACA" }}>
+              <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 8, color: "var(--danger)" }}>Træk samtykke tilbage</h3>
+              <p style={{ fontSize: 14, lineHeight: 1.6, marginBottom: 14 }}>Dette sletter permanent alle dine svar, lydoptagelser, metadata og din konto. Handlingen kan ikke fortrydes.</p>
+              {!profileConfirmDelete ? (
+                <button onClick={() => setProfileConfirmDelete(true)} style={{ padding: "12px 20px", borderRadius: 10, border: "2px solid var(--danger)", background: "transparent", color: "var(--danger)", cursor: "pointer", fontFamily: "DM Sans", fontSize: 14, fontWeight: 600 }}>Slet alle mine data</button>
+              ) : (
+                <div>
+                  <p style={{ fontSize: 14, fontWeight: 600, color: "var(--danger)", marginBottom: 10 }}>Er du sikker? Al data slettes permanent.</p>
+                  <div style={{ display: "flex", gap: 10 }}>
+                    <button onClick={handleDeleteAllData} style={{ padding: "12px 20px", borderRadius: 10, border: "none", background: "var(--danger)", color: "#fff", cursor: "pointer", fontFamily: "DM Sans", fontSize: 14, fontWeight: 600 }}>Ja, slet alt</button>
+                    <button onClick={() => setProfileConfirmDelete(false)} style={{ padding: "12px 20px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--card)", cursor: "pointer", fontFamily: "DM Sans", fontSize: 14 }}>Annuller</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     );
   }
