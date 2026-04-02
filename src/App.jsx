@@ -297,7 +297,7 @@ const DonutChart = ({ data, size = 160 }) => {
 // ═══════════════════════════════════════════════
 
 const CitizenFlow = ({ onAdminClick }) => {
-  // Steps: 0=welcome, 1=theme, 2=question, 3=auth, 4=consent, 5=followup, 6=metadata, 7=thanks, 8=profile, 9=privacy-policy, 10=change-password
+  // Steps: 0=welcome, 1=theme, 2=question, 3=auth, 4=consent, 5=followup, 6=metadata, 7=thanks, 8=profile, 9=privacy-policy, 10=change-password, 11=om-platformen
   const [step, setStep] = useState(0);
   const [citizenToken, setCitizenToken] = useState(() => localStorage.getItem("citizenToken"));
   const [citizen, setCitizen] = useState(() => { try { return JSON.parse(localStorage.getItem("citizen")); } catch { return null; } });
@@ -745,7 +745,8 @@ const CitizenFlow = ({ onAdminClick }) => {
         <h1 style={{ fontSize: 28, fontWeight: 700, marginBottom: 12, lineHeight: 1.2 }}>Stemmer fra Norddjurs</h1>
         <p style={{ fontSize: 17, color: "var(--muted)", lineHeight: 1.6, maxWidth: 340, marginBottom: 40 }}>Vi vil gerne høre din holdning til kommunens prioriteringer. Det tager kun 2-4 minutter.</p>
         <button onClick={() => setStep(1)} style={bp}>Kom i gang</button>
-        <button onClick={onAdminClick} style={{ marginTop: 40, background: "none", border: "none", color: "var(--muted)", fontSize: 13, cursor: "pointer", fontFamily: "DM Sans", opacity: 0.5 }}>Admin</button>
+        <button onClick={() => { prevStep.current = 0; setStep(11); }} style={{ marginTop: 16, background: "none", border: "none", color: "var(--primary)", fontSize: 14, cursor: "pointer", fontFamily: "DM Sans", fontWeight: 500, textDecoration: "underline", textDecorationColor: "var(--primary)", textUnderlineOffset: 3 }}>Om platformen</button>
+        <button onClick={onAdminClick} style={{ marginTop: 24, background: "none", border: "none", color: "var(--muted)", fontSize: 13, cursor: "pointer", fontFamily: "DM Sans", opacity: 0.5 }}>Admin</button>
       </div>
     </div>
   );
@@ -1290,6 +1291,43 @@ const CitizenFlow = ({ onAdminClick }) => {
         >
           {loading ? "Gemmer..." : "Gem ny adgangskode og fortsæt"}
         </button>
+      </div>
+    </div>
+  );
+
+  // ── Step 11: Om platformen ──
+  if (step === 11) return (
+    <div style={cs} className="fade-in">
+      <TopBar onBack={() => setStep(prevStep.current || 0)} backLabel="Tilbage" />
+      <div style={{ flex: 1 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 24 }}>
+          <div style={{ width: 48, height: 48, borderRadius: 12, background: "var(--primary)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+            <span style={{ fontSize: 22 }}>🗣️</span>
+          </div>
+          <h2 style={{ fontSize: 22, fontWeight: 700, lineHeight: 1.2 }}>Om platformen</h2>
+        </div>
+        <div style={{ background: "var(--card)", borderRadius: 16, padding: "24px 20px", border: "1px solid var(--border)", lineHeight: 1.8, fontSize: 15, color: "var(--fg)" }}>
+          <p style={{ marginBottom: 16 }}>
+            I Norddjurs Kommune tror vi på, at de bedste beslutninger træffes, når de bygger på det, borgerne faktisk oplever og prioriterer. Budgettet er et af kommunens vigtigste redskaber – og det bør afspejle de mennesker, det er til for.
+          </p>
+          <p style={{ marginBottom: 16 }}>
+            Derfor har vi skabt denne platform. Vi vil gerne høre fra dig – om din hverdag, dine oplevelser med kommunens tilbud, og hvad der betyder mest for dig og din familie.
+          </p>
+          <p style={{ marginBottom: 16 }}>
+            Du starter med at vælge et emne, der optager dig, og derfra stiller vi dig nogle spørgsmål. Du svarer med dine egne ord – enten ved at skrive eller tale. Undervejs lytter vi til det, du fortæller, og spørger lidt dybere ind, så vi virkelig forstår, hvad du mener. Tænk på det som en samtale, hvor der er plads til at uddybe og nuancere.
+          </p>
+          <p style={{ marginBottom: 0 }}>
+            Det du deler, bringer vi videre til kommunens politikere. For din stemme skal ikke bare høres – den skal kunne spores helt ind i de beslutninger, der former Norddjurs.
+          </p>
+        </div>
+        <div style={{ marginTop: 20, padding: "16px 20px", background: "var(--primary-pale)", borderRadius: 14, border: "1px solid var(--primary)", display: "flex", gap: 12, alignItems: "flex-start" }}>
+          <span style={{ fontSize: 20, flexShrink: 0, marginTop: 2 }}>🏛️</span>
+          <div>
+            <p style={{ fontSize: 13, fontWeight: 600, color: "var(--primary)", marginBottom: 4 }}>Bag platformen</p>
+            <p style={{ fontSize: 13, color: "var(--fg)", lineHeight: 1.6 }}>Platformen er udviklet af og for Norddjurs Kommune som led i arbejdet med Budget 2027.</p>
+          </div>
+        </div>
+        <button onClick={() => setStep(1)} style={{ ...bp, marginTop: 24 }}>Kom i gang</button>
       </div>
     </div>
   );
