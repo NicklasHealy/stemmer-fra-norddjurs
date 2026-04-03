@@ -2,7 +2,7 @@
 
 import os
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -55,7 +55,7 @@ def citizen_login(request: Request, data: CitizenLogin, db: Session = Depends(ge
         raise HTTPException(401, "Forkert email eller adgangskode")
 
     if citizen.must_change_password and citizen.temp_password_expires:
-        if datetime.utcnow() > citizen.temp_password_expires:
+        if datetime.now(timezone.utc) > citizen.temp_password_expires:
             raise HTTPException(401, "Den midlertidige adgangskode er udløbet. Kontakt en administrator for at få en ny.")
 
     token = create_token({"sub": citizen.id, "role": "citizen"})
@@ -85,7 +85,7 @@ def citizen_consent(
     db: Session = Depends(get_db),
 ):
     citizen.consent_given = data.consent_given
-    citizen.consent_given_at = datetime.utcnow() if data.consent_given else None
+    citizen.consent_given_at = datetime.now(timezone.utc) if data.consent_given else None
     if data.consent_given:
         citizen.consent_version = CURRENT_CONSENT_VERSION
     ip = request.client.host if request.client else None
@@ -110,7 +110,7 @@ def citizen_update_metadata(data: MetadataUpdate, citizen: Citizen = Depends(get
     if data.age_group is not None: meta.age_group = data.age_group
     if data.area is not None: meta.area = data.area
     if data.role is not None: meta.role = data.role
-    meta.updated_at = datetime.utcnow()
+    meta.updated_at = datetime.now(timezone.utc)
     db.commit()
     return {"ok": True, "metadata": meta_dict(meta)}
 
@@ -213,7 +213,7 @@ def citizen_export(citizen: Citizen = Depends(get_current_citizen), db: Session 
             "created_at": r.created_at.isoformat() if r.created_at else None,
         })
     return {
-        "exported_at": datetime.utcnow().isoformat(),
+        "exported_at": datetime.now(timezone.utc).isoformat(),
         "citizen": {
             "email": citizen.email,
             "created_at": citizen.created_at.isoformat() if citizen.created_at else None,

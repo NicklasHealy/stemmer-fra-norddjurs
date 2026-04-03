@@ -4,7 +4,7 @@ import csv
 import io
 import re
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -117,7 +117,7 @@ def admin_update_forloeb(forloeb_id: str, data: ForloebUpdate, admin: AdminUser 
         raise HTTPException(404, "Forløb ikke fundet")
     for key, val in data.model_dump(exclude_none=True).items():
         setattr(f, key, val)
-    f.updated_at = datetime.utcnow()
+    f.updated_at = datetime.now(timezone.utc)
     db.commit()
     return forloeb_dict(f, db)
 
@@ -173,7 +173,7 @@ def admin_publish_forloeb(forloeb_id: str, admin: AdminUser = Depends(get_curren
         raise HTTPException(422, "Forløbet skal have mindst ét aktivt spørgsmål")
     f.status = "published"
     f.is_active = True
-    f.updated_at = datetime.utcnow()
+    f.updated_at = datetime.now(timezone.utc)
     db.commit()
     return forloeb_dict(f, db)
 
@@ -228,7 +228,7 @@ def admin_approve_question(question_id: str, admin: AdminUser = Depends(get_curr
     if not q:
         raise HTTPException(404, "Spørgsmål ikke fundet")
     q.is_approved = True
-    q.updated_at = datetime.utcnow()
+    q.updated_at = datetime.now(timezone.utc)
     db.commit()
     return question_dict(q)
 
@@ -268,7 +268,7 @@ def admin_update_question(question_id: str, data: QuestionUpdate, admin: AdminUs
         raise HTTPException(404, "Spørgsmål ikke fundet")
     for key, val in data.model_dump(exclude_none=True).items():
         setattr(q, key, val)
-    q.updated_at = datetime.utcnow()
+    q.updated_at = datetime.now(timezone.utc)
     db.commit()
     return question_dict(q)
 
@@ -748,7 +748,7 @@ def admin_reset_citizen_password(
         raise HTTPException(404, "Borger ikke fundet")
 
     temp_pw = generate_temp_password()
-    expires_at = datetime.utcnow() + timedelta(hours=TEMP_PASSWORD_EXPIRY_HOURS)
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=TEMP_PASSWORD_EXPIRY_HOURS)
 
     citizen.password_hash = hash_password(temp_pw)
     citizen.must_change_password = True
