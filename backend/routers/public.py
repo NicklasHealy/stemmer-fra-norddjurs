@@ -7,8 +7,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models import Forloeb, Theme, Question, Citizen, Area
-from auth import get_current_citizen
+from models import Forloeb, Theme, Question, Citizen, Area, AdminUser
+from auth import get_current_citizen, get_current_admin
 from schemas import AreaCreate, CitizenQuestionCreate
 from serializers import (
     forloeb_dict, theme_dict, question_dict,
@@ -128,7 +128,7 @@ def get_areas(db: Session = Depends(get_db)):
 
 
 @router.post("/areas")
-def create_area(data: AreaCreate, db: Session = Depends(get_db)):
+def create_area(data: AreaCreate, admin: AdminUser = Depends(get_current_admin), db: Session = Depends(get_db)):
     name = data.name.strip()
     if not name or len(name) > 100:
         raise HTTPException(400, "Ugyldigt områdenavn")

@@ -19,7 +19,7 @@ class TestCitizenRegister:
         })
         assert r.status_code == 200
         data = r.json()
-        assert "access_token" in data
+        assert "token" in data
 
     def test_register_duplicate_email(self, client):
         email = unique_email()
@@ -46,7 +46,7 @@ class TestCitizenLogin:
         client.post("/api/citizen/register", json={"email": email, "password": VALID_PASSWORD})
         r = client.post("/api/citizen/login", json={"email": email, "password": VALID_PASSWORD})
         assert r.status_code == 200
-        assert "access_token" in r.json()
+        assert "token" in r.json()
 
     def test_login_wrong_password(self, client):
         email = unique_email()
@@ -83,7 +83,7 @@ class TestCitizenChangePassword:
         email = unique_email()
         client.post("/api/citizen/register", json={"email": email, "password": VALID_PASSWORD})
         login = client.post("/api/citizen/login", json={"email": email, "password": VALID_PASSWORD})
-        token = login.json()["access_token"]
+        token = login.json()["token"]
 
         r = client.put(
             "/api/citizen/change-password",

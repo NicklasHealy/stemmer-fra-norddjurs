@@ -101,8 +101,10 @@ async def get_optional_citizen(
         citizen_id = payload.get("sub")
         if citizen_id and payload.get("role") == "citizen":
             return db.query(Citizen).filter(Citizen.id == citizen_id).first()
-    except:
+    except HTTPException:
         pass
+    except Exception as e:
+        print(f"[Auth] Uventet fejl i get_optional_citizen: {e}")
     return None
 
 
