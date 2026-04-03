@@ -3,6 +3,7 @@
 Samlet ét sted så alle routers bruger samme output-format.
 """
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from models import (
     Citizen, Theme, Question, Forloeb, Response,
@@ -129,7 +130,22 @@ def forloeb_dict(f: Forloeb, db: Session) -> dict:
         "created_at": f.created_at.isoformat() if f.created_at else None,
     }
     if f.mode == "themes":
-        d["themes"] = [theme_dict(t, db) for t in f.themes]
+        theme_ids = [t.id for t in f.themes]
+        # Én samlet COUNT-query for alle temaer — undgår N+1
+        counts = dict(
+            db.query(Question.theme_id, func.count(Question.id))
+            .filter(Question.theme_id.in_(theme_ids), Question.is_active == True)
+            .group_by(Question.theme_id)
+            .all()
+        ) if theme_ids else {}
+        d["themes"] = [
+            {
+                "id": t.id, "name": t.name, "icon": t.icon, "sort_order": t.sort_order,
+                "question_count": counts.get(t.id, 0),
+                "forloeb_id": getattr(t, "forloeb_id", None),
+            }
+            for t in f.themes
+        ]
     else:
         d["question_count"] = db.query(Question).filter(
             Question.forloeb_id == f.id,
