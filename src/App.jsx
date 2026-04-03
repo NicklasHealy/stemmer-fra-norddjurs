@@ -1,7 +1,9 @@
 import { useState, useEffect, useRef } from "react";
 
 // ─── API ───
-const API_BASE = "http://localhost:8321";
+// I udvikling: sæt VITE_API_BASE=http://localhost:8321 i .env.development
+// I produktion: lad den være tom — IIS proxier /api/* til backend
+const API_BASE = import.meta.env.VITE_API_BASE ?? "";
 
 const apiFetch = (path, options = {}, token = null) => {
   const headers = { ...(options.headers || {}) };
