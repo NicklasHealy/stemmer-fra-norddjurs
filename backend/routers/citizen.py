@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from models import Citizen, Response, ResponseMetadata, Question, Theme, ConsentLog
-from auth import hash_password, verify_password, create_token, get_current_citizen
+from auth import hash_password, verify_password, create_token, create_refresh_token, get_current_citizen
 from schemas import (
     CitizenRegister, CitizenLogin, ConsentUpdate,
     MetadataUpdate, ChangePasswordRequest,
@@ -44,7 +44,8 @@ def citizen_register(request: Request, data: CitizenRegister, db: Session = Depe
     db.refresh(citizen)
 
     token = create_token({"sub": citizen.id, "role": "citizen"})
-    return {"token": token, "citizen": citizen_dict(citizen)}
+    refresh_token = create_refresh_token({"sub": citizen.id, "role": "citizen"})
+    return {"token": token, "refresh_token": refresh_token, "citizen": citizen_dict(citizen)}
 
 
 @router.post("/login")
@@ -59,7 +60,16 @@ def citizen_login(request: Request, data: CitizenLogin, db: Session = Depends(ge
             raise HTTPException(401, "Den midlertidige adgangskode er udløbet. Kontakt en administrator for at få en ny.")
 
     token = create_token({"sub": citizen.id, "role": "citizen"})
-    return {"token": token, "citizen": citizen_dict(citizen)}
+    refresh_token = create_refresh_token({"sub": citizen.id, "role": "citizen"})
+    return {"token": token, "refresh_token": refresh_token, "citizen": citizen_dict(citizen)}
+
+
+@router.post("/refresh")
+@limiter.limit("30/minute")
+def citizen_refresh_token(request: Request, citizen: Citizen = Depends(get_current_citizen)):
+    """Udsted et nyt access-token baseret på et gyldigt token (bruges til stille fornyelse)."""
+    token = create_token({"sub": citizen.id, "role": "citizen"})
+    return {"token": token}
 
 
 @router.get("/me")

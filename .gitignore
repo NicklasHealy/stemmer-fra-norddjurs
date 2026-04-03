@@ -9,6 +9,7 @@ env/
 # Environment variables (ALDRIG commit credentials)
 .env
 .env.local
+.env.development
 .env.production
 
 # Database (lokal testdata)
