@@ -8,68 +8,7 @@ from models import (
     Citizen, Theme, Question, Forloeb, Response,
     ResponseMetadata, ModerationRule,
 )
-
-# ─── Samtykke-version ─────────────────────────────────────────────────────────
-# Bump denne ved ændring af samtykkebetingelser — borgere med lavere version
-# bedes re-acceptere næste gang de logger ind.
-CURRENT_CONSENT_VERSION = 1
-
-# ─── Privatlivspolitik ────────────────────────────────────────────────────────
-PRIVACY_POLICY_TEXT = (
-    "# Privatlivspolitik — Stemmer fra Norddjurs\n\n"
-    "**Opdateret:** Maj 2026\n\n"
-    "---\n\n"
-    "## Dataansvarlig\n\n"
-    "Norddjurs Kommune\nTorvet 3, 8500 Grenaa\nTlf. 89 59 10 00\nnorddjurs@norddjurs.dk\n\n"
-    "## Databeskyttelsesrådgiver (DPO)\n\n"
-    "Databeskyttelsesrådgiver\ndbr@norddjurs.dk\nTlf. 89 59 15 23\n\n"
-    "---\n\n"
-    "## Formål med behandlingen\n\n"
-    "Norddjurs Kommune indsamler borgerholdninger via platformen 'Stemmer fra Norddjurs' til brug i kommunens "
-    "budgetproces for Budget 2027. Formålet er at sikre bred borgerhøring i projektet 'Sammen om Norddjurs'.\n\n"
-    "## Retsgrundlag\n\n"
-    "Behandlingen sker på grundlag af dit samtykke, jf. GDPR artikel 6, stk. 1, litra a. "
-    "Du kan til enhver tid trække dit samtykke tilbage.\n\n"
-    "---\n\n"
-    "## Hvilke oplysninger indsamler vi?\n\n"
-    "- **Email-adresse** — bruges til login\n"
-    "- **Adgangskode** — opbevares krypteret (bcrypt), aldrig i klartekst\n"
-    "- **Dine besvarelser** — tekst og/eller lydoptagelser (max 90 sekunder)\n"
-    "- **Frivillig metadata** — aldersgruppe og by/område\n\n"
-    "---\n\n"
-    "## AI-behandling\n\n"
-    "Dine svar bruges til at generere opfølgningsspørgsmål via en lokal AI-model (Qwen 14B via Ollama). "
-    "AI-modellen kører udelukkende på Norddjurs Kommunes egen server — ingen data sendes til eksterne tjenester. "
-    "AI-modellen træffer ingen automatiserede beslutninger, der påvirker dig.\n\n"
-    "---\n\n"
-    "## Opbevaring og sletning\n\n"
-    "Data opbevares sikkert på Norddjurs Kommunes servere og slettes senest februar 2027, "
-    "medmindre du selv sletter dem tidligere via din profil.\n\n"
-    "## Modtagere\n\n"
-    "Dine data behandles udelukkende af projektmedarbejdere i Norddjurs Kommune. "
-    "Anonymiserede og aggregerede resultater præsenteres for kommunens politikere.\n\n"
-    "---\n\n"
-    "## Dine rettigheder\n\n"
-    "- **Indsigt (art. 15):** Se dine data via din profil eller ved henvendelse til kommunen.\n"
-    "- **Berigtigelse (art. 16):** Ret oplysninger i din profil.\n"
-    "- **Sletning (art. 17):** Slet alle dine data via 'Træk samtykke tilbage' i din profil.\n"
-    "- **Begrænsning (art. 18):** Brug 'Frys mine data' i din profil — dine svar ekskluderes fra analyse.\n"
-    "- **Dataportabilitet (art. 20):** Download dine data som JSON via din profil.\n"
-    "- **Indsigelse (art. 21):** Kontakt DPO på dbr@norddjurs.dk.\n\n"
-    "## Tilbagetrækning af samtykke\n\n"
-    "Du kan til enhver tid trække dit samtykke tilbage via din profil. "
-    "Alle dine data slettes permanent, og handlingen kan ikke fortrydes.\n\n"
-    "---\n\n"
-    "## Klageadgang\n\n"
-    "Datatilsynet, Carl Jacobsens Vej 35, 2500 Valby\ndt@datatilsynet.dk\ndatatilsynet.dk\n\n"
-    "---\n\n"
-    "## Sikkerhed\n\n"
-    "Platformen anvender HTTPS, krypterede adgangskoder og JWT-tokens. "
-    "Al databehandling foregår inden for Norddjurs Kommunes netværk."
-)
-
-
-# ─── Serializer-funktioner ────────────────────────────────────────────────────
+from content import PRIVACY_POLICY_TEXT, CURRENT_CONSENT_VERSION  # noqa: F401 — re-exported
 
 def citizen_dict(c: Citizen) -> dict:
     return {

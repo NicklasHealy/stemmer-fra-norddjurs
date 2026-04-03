@@ -1,7 +1,7 @@
 """SQLAlchemy modeller for Stemmer fra Norddjus."""
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import (
     Column, String, Text, Boolean, Integer, Float, DateTime,
     ForeignKey, Index, Enum as SAEnum, JSON
@@ -31,8 +31,8 @@ class Forloeb(Base):
     start_date = Column(DateTime, nullable=True)
     end_date = Column(DateTime, nullable=True)
     sort_order = Column(Integer, default=0)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     themes = relationship("Theme", back_populates="forloeb")
     direct_questions = relationship(
@@ -54,7 +54,7 @@ class Theme(Base):
     icon = Column(String(10), default="📋")
     sort_order = Column(Integer, default=0)
     forloeb_id = Column(String, ForeignKey("forloeb.id"), nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     questions = relationship("Question", back_populates="theme")
     forloeb = relationship("Forloeb", back_populates="themes")
@@ -80,8 +80,8 @@ class Question(Base):
     submitted_by_citizen_id = Column(String, ForeignKey("citizens.id", ondelete="SET NULL"), nullable=True)
     is_approved = Column(Boolean, default=True)
     is_anonymous = Column(Boolean, default=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     theme = relationship("Theme", back_populates="questions")
     forloeb = relationship("Forloeb", foreign_keys=[forloeb_id], back_populates="direct_questions")
@@ -101,7 +101,7 @@ class Citizen(Base):
     frozen = Column(Boolean, default=False, nullable=False)
     must_change_password = Column(Boolean, default=False, nullable=False)
     temp_password_expires = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     responses = relationship("Response", back_populates="citizen", cascade="all, delete-orphan")
     citizen_metadata = relationship("ResponseMetadata", back_populates="citizen", cascade="all, delete-orphan", uselist=False)
@@ -129,7 +129,7 @@ class Response(Base):
     followup_question_text = Column(Text, nullable=True)
     is_excluded = Column(Boolean, default=False, index=True)
     is_flagged = Column(Boolean, default=False, index=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     sentiment_label = Column(String(20), nullable=True)
     sentiment_score = Column(Float, nullable=True)
     sentiment_low_agreement = Column(Boolean, default=False, nullable=True)
@@ -151,8 +151,8 @@ class ResponseMetadata(Base):
     device_type = Column(String(20), nullable=True)
     user_agent = Column(String(500), nullable=True)
     time_spent_seconds = Column(Integer, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     citizen = relationship("Citizen", back_populates="citizen_metadata")
 
@@ -169,7 +169,7 @@ class AnalysisCache(Base):
     theme_id = Column(String, ForeignKey("themes.id"), nullable=True)
     analysis_type = Column(String(50), nullable=False)  # themes, sentiment, quotes, wordcloud, summary
     result_json = Column(JSON, nullable=True)
-    generated_at = Column(DateTime, default=datetime.utcnow)
+    generated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     response_count_at_generation = Column(Integer, default=0)
 
 
@@ -180,7 +180,7 @@ class AdminUser(Base):
     email = Column(String(320), unique=True, nullable=False)
     password_hash = Column(String(200), nullable=False)
     name = Column(String(200), nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
 class AISettings(Base):
@@ -189,7 +189,7 @@ class AISettings(Base):
     id = Column(String, primary_key=True, default="default")
     system_prompt = Column(Text, nullable=False)
     perspective_threshold = Column(Integer, default=30)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
 
 class Area(Base):
@@ -198,7 +198,7 @@ class Area(Base):
     id = Column(String(36), primary_key=True, default=new_uuid)
     name = Column(String(100), unique=True, nullable=False)
     sort_order = Column(Integer, default=0)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
 class ModerationRule(Base):
@@ -209,7 +209,7 @@ class ModerationRule(Base):
     pattern = Column(String(500), nullable=False)
     description = Column(String(300), nullable=True)
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
 class ConsentLog(Base):
@@ -220,7 +220,7 @@ class ConsentLog(Base):
     consent_given = Column(Boolean, nullable=False)
     consent_version = Column(Integer, nullable=False, default=1)
     ip_address = Column(String(45), nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     citizen = relationship("Citizen", back_populates="consent_logs")
 
@@ -231,7 +231,7 @@ class PasswordResetLog(Base):
     id = Column(String, primary_key=True, default=new_uuid)
     admin_user_id = Column(String, ForeignKey("admin_users.id"), nullable=False)
     target_citizen_id = Column(String, ForeignKey("citizens.id", ondelete="CASCADE"), nullable=False, index=True)
-    reset_at = Column(DateTime, default=datetime.utcnow)
+    reset_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     temp_password_expires = Column(DateTime, nullable=False)
 
     admin = relationship("AdminUser")
