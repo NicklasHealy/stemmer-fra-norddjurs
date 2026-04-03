@@ -47,7 +47,7 @@ def citizen_token(client):
     client.post("/api/citizen/register", json={"email": email, "password": "TestPass1!"})
     r = client.post("/api/citizen/login", json={"email": email, "password": "TestPass1!"})
     assert r.status_code == 200, f"Login fejlede: {r.text}"
-    return r.json()["access_token"]
+    return r.json()["token"]
 
 
 @pytest.fixture
