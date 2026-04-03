@@ -83,11 +83,11 @@ class TestCitizenChangePassword:
         email = unique_email()
         client.post("/api/citizen/register", json={"email": email, "password": VALID_PASSWORD})
         login = client.post("/api/citizen/login", json={"email": email, "password": VALID_PASSWORD})
-        token = login.json()["access_token"]
+        token = login.json()["token"]
 
         r = client.put(
             "/api/citizen/change-password",
-            json={"current_password": VALID_PASSWORD, "new_password": "NytPass99!"},
+            json={"current_password": VALID_PASSWORD, "new_password": "NytPass99!", "confirm_password": "NytPass99!"},
             headers={"Authorization": f"Bearer {token}"},
         )
         assert r.status_code == 200
@@ -95,7 +95,7 @@ class TestCitizenChangePassword:
     def test_change_password_wrong_current(self, client, citizen_token):
         r = client.put(
             "/api/citizen/change-password",
-            json={"current_password": "ForkertGammelt1!", "new_password": "NytPass99!"},
+            json={"current_password": "ForkertGammelt1!", "new_password": "NytPass99!", "confirm_password": "NytPass99!"},
             headers={"Authorization": f"Bearer {citizen_token}"},
         )
         assert r.status_code == 401
@@ -103,7 +103,7 @@ class TestCitizenChangePassword:
     def test_change_password_weak_new(self, client, citizen_token):
         r = client.put(
             "/api/citizen/change-password",
-            json={"current_password": VALID_PASSWORD, "new_password": WEAK_PASSWORD},
+            json={"current_password": VALID_PASSWORD, "new_password": WEAK_PASSWORD, "confirm_password": WEAK_PASSWORD},
             headers={"Authorization": f"Bearer {citizen_token}"},
         )
         assert r.status_code == 400

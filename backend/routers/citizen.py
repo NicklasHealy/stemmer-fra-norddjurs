@@ -181,6 +181,8 @@ def citizen_change_password(
     citizen: Citizen = Depends(get_current_citizen),
     db: Session = Depends(get_db),
 ):
+    if not verify_password(data.current_password, citizen.password_hash):
+        raise HTTPException(401, "Nuværende adgangskode er forkert")
     if data.new_password != data.confirm_password:
         raise HTTPException(400, "Adgangskoderne er ikke ens")
     err = validate_citizen_password(data.new_password)
