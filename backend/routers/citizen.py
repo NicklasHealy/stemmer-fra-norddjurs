@@ -133,11 +133,20 @@ def citizen_responses(citizen: Citizen = Depends(get_current_citizen), db: Sessi
         Response.citizen_id == citizen.id,
         Response.is_excluded == False,
     ).order_by(Response.created_at.desc()).all()
+
+    # Batch-load — max 3 queries uanset antal besvarelser
+    question_ids = {r.question_id for r in responses if r.question_id}
+    questions_map = {q.id: q for q in db.query(Question).filter(Question.id.in_(question_ids)).all()} if question_ids else {}
+    theme_ids = {q.theme_id for q in questions_map.values() if q.theme_id}
+    themes_map = {t.id: t for t in db.query(Theme).filter(Theme.id.in_(theme_ids)).all()} if theme_ids else {}
+    resp_ids = {r.id for r in responses if not r.is_followup}
+    followups_map = {f.parent_response_id: f for f in db.query(Response).filter(Response.parent_response_id.in_(resp_ids)).all()} if resp_ids else {}
+
     result = []
     for r in responses:
-        q = db.query(Question).filter(Question.id == r.question_id).first()
-        t = db.query(Theme).filter(Theme.id == q.theme_id).first() if q and q.theme_id else None
-        followup = db.query(Response).filter(Response.parent_response_id == r.id).first() if not r.is_followup else None
+        q = questions_map.get(r.question_id)
+        t = themes_map.get(q.theme_id) if q and q.theme_id else None
+        followup = followups_map.get(r.id) if not r.is_followup else None
         result.append({
             **response_dict(r),
             "question": {"id": q.id, "body": q.body, "title": q.title} if q else None,
@@ -198,10 +207,17 @@ def citizen_export(citizen: Citizen = Depends(get_current_citizen), db: Session 
     """Returnerer alle borgerens data som JSON (art. 20 dataportabilitet)."""
     meta = db.query(ResponseMetadata).filter(ResponseMetadata.citizen_id == citizen.id).first()
     responses = db.query(Response).filter(Response.citizen_id == citizen.id).order_by(Response.created_at).all()
+
+    # Batch-load — max 2 queries uanset antal besvarelser
+    question_ids = {r.question_id for r in responses if r.question_id}
+    questions_map = {q.id: q for q in db.query(Question).filter(Question.id.in_(question_ids)).all()} if question_ids else {}
+    theme_ids = {q.theme_id for q in questions_map.values() if q.theme_id}
+    themes_map = {t.id: t for t in db.query(Theme).filter(Theme.id.in_(theme_ids)).all()} if theme_ids else {}
+
     result = []
     for r in responses:
-        q = db.query(Question).filter(Question.id == r.question_id).first()
-        t = db.query(Theme).filter(Theme.id == q.theme_id).first() if q and q.theme_id else None
+        q = questions_map.get(r.question_id)
+        t = themes_map.get(q.theme_id) if q and q.theme_id else None
         result.append({
             "id": r.id,
             "question": q.body if q else None,

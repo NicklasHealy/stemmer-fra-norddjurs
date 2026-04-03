@@ -142,7 +142,7 @@ const AudioRecorder = ({ onRecorded }) => {
       setRecording(true);
       setElapsed(0);
       timerRef.current = setInterval(() => setElapsed(p => {
-        if (p >= 29) { mr.stop(); setRecording(false); clearInterval(timerRef.current); }
+        if (p >= 89) { mr.stop(); setRecording(false); clearInterval(timerRef.current); }
         return p + 1;
       }), 1000);
     } catch {

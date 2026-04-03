@@ -7,7 +7,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, Request
 from sqlalchemy.orm import Session
 
-import threading
+from concurrent.futures import ThreadPoolExecutor
 from database import get_db, SessionLocal as _SessionLocal
 from models import Citizen, Response, Question, AISettings
 from auth import get_optional_citizen
@@ -25,6 +25,9 @@ from constants import (
 router = APIRouter(prefix="/api", tags=["responses"])
 
 UPLOAD_DIR = os.getenv("UPLOAD_DIR", "./uploads")
+
+_SENTIMENT_WORKERS = int(os.getenv("SENTIMENT_WORKERS", "2"))
+_sentiment_pool = ThreadPoolExecutor(max_workers=_SENTIMENT_WORKERS, thread_name_prefix="sentiment")
 
 
 def _analyse_sentiment_async(response_id: str, text: str):
@@ -45,7 +48,7 @@ def _analyse_sentiment_async(response_id: str, text: str):
                 db.close()
         except Exception as e:
             print(f"[Sentiment] Async analyse fejlede: {e}")
-    threading.Thread(target=_run, daemon=True).start()
+    _sentiment_pool.submit(_run)
 MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_SIZE_MB", str(MAX_UPLOAD_SIZE_MB))) * 1024 * 1024
 
 
