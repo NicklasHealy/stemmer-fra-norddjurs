@@ -54,8 +54,8 @@ MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_SIZE_MB", str(MAX_UPLOAD_SIZE_MB)))
 async def transcribe_preview(request: Request, file: UploadFile = File(...)):
     """Transskribér lyd til tekst uden at gemme som besvarelse — bruges til preview."""
     content_type = (file.content_type or "").split(";")[0].strip()
-    if content_type and content_type not in ALLOWED_AUDIO_MIMETYPES:
-        raise HTTPException(415, f"Ikke-understøttet filformat: {content_type}")
+    if not content_type or content_type not in ALLOWED_AUDIO_MIMETYPES:
+        raise HTTPException(415, f"Ikke-understøttet filformat: {content_type or 'ukendt'}")
 
     contents = await file.read(MAX_UPLOAD_BYTES + 1)
     if len(contents) > MAX_UPLOAD_BYTES:
@@ -145,8 +145,8 @@ async def submit_audio_response(
 ):
     """Upload lyd, transskribér, og gem som response."""
     content_type = (file.content_type or "").split(";")[0].strip()
-    if content_type and content_type not in ALLOWED_AUDIO_MIMETYPES:
-        raise HTTPException(415, f"Ikke-understøttet filformat: {content_type}")
+    if not content_type or content_type not in ALLOWED_AUDIO_MIMETYPES:
+        raise HTTPException(415, f"Ikke-understøttet filformat: {content_type or 'ukendt'}")
 
     contents = await file.read(MAX_UPLOAD_BYTES + 1)
     if len(contents) > MAX_UPLOAD_BYTES:

@@ -24,7 +24,7 @@ ALLOWED_AUDIO_MIMETYPES = {
     "audio/m4a",
     "audio/x-m4a",
     "video/webm",           # Browsers sender ofte webm/opus som video/webm
-    "application/octet-stream",  # Fallback når browser ikke sætter korrekt MIME
+    # application/octet-stream fjernet — for generisk og åbner for vilkårlig filupload
 }
 
 # ─── AI / analyse ──────────────────────────────────────────────────────────────
